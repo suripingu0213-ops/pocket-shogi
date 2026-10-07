@@ -620,7 +620,9 @@
 
     clearTT() { this.ttKey.fill(0); this.ttFlag.fill(0); }
 
-    // opts: {timeMs, maxDepth, noise, onInfo}
+    // opts: {timeMs, maxDepth, noise, onInfo, only, multi}
+    //   only : 調べる手を限定（指し手の配列）
+    //   multi: すべての手を全幅で読み、正確な評価値を result.scores に返す（振り返りの候補手比較用）
     search(pos, opts) {
       opts = opts || {};
       this.pos = pos;
@@ -633,9 +635,11 @@
       const maxDepth = opts.maxDepth || 64, noise = opts.noise || 0;
 
       const decl = pos.declarationStatus();
-      if (decl && decl.result === 'win') return { move: 0, declare: true, score: MATE, depth: 0, nodes: 0, pv: [] };
+      if (decl && decl.result === 'win' && !opts.multi) return { move: 0, declare: true, score: MATE, depth: 0, nodes: 0, pv: [] };
 
-      const rootMoves = pos.legalMoves();
+      let rootMoves = pos.legalMoves();
+      if (opts.only) { const set = new Set(opts.only); rootMoves = rootMoves.filter(m => set.has(m)); }
+      const multi = !!opts.multi, exact = new Map();
       if (!rootMoves.length) return { move: 0, score: -MATE, depth: 0, nodes: 0, pv: [] };
       const offset = new Map(rootMoves.map(m => [m, noise ? Math.floor(Math.random() * noise) : 0]));
       let best = { move: rootMoves[0], score: 0, depth: 0, pv: [rootMoves[0]] };
@@ -648,7 +652,7 @@
           const m = order[k], off = offset.get(m);
           pos.make(m);
           let sc;
-          if (k === 0) sc = -this.negamax(depth - 1, -INF, -(alpha - off), 1, true) + off;
+          if (k === 0 || multi) sc = -this.negamax(depth - 1, -INF, multi ? INF : -(alpha - off), 1, true) + off;
           else {
             sc = -this.negamax(depth - 1, -(alpha - off) - 1, -(alpha - off), 1, true) + off;
             if (sc > alpha && !this.stop) sc = -this.negamax(depth - 1, -INF, -(alpha - off), 1, true) + off;
@@ -656,6 +660,7 @@
           pos.unmake();
           if (this.stop) break;
           scored.push([m, sc]);
+          if (multi) exact.set(m, sc);
           if (sc > bestScore) { bestScore = sc; bestMove = m; }
           if (sc > alpha) alpha = sc;
         }
@@ -668,10 +673,11 @@
         order = scored.map(x => x[0]);
         best = { move: bestMove, score: bestScore, depth, pv: this.extractPV(bestMove) };
         if (opts.onInfo) opts.onInfo({ depth, score: bestScore, nodes: this.nodes, pv: best.pv.map(moveToUSI) });
-        if (Math.abs(bestScore) >= MATE_BOUND) break; // 詰みを読み切った
+        if (Math.abs(bestScore) >= MATE_BOUND && !multi) break; // 詰みを読み切った
         if (Date.now() > this.deadline) break;
       }
       best.nodes = this.nodes;
+      if (multi) best.scores = Array.from(exact.entries()); // 最後に読めた深さでの各手の評価値
       return best;
     }
 

@@ -255,7 +255,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v7</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v9</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -315,13 +315,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         <button data-v="0">先手 ▲</button><button data-v="1">後手 △</button><button data-v="r">ふり駒</button>
       </div>
     </div>
-    <div class="field">
-      <span>AIの強さ</span>
-      <div class="seg" id="segLevel">
-        <button data-v="0">入門</button><button data-v="1">初級</button><button data-v="2">中級</button><button data-v="3">上級</button><button data-v="4">最強</button>
-      </div>
-      <div class="levelnote" id="levelNote"></div>
-    </div>
+    <p class="levelnote">AIは1手8秒ほど考えます（最強設定）。</p>
     <div class="row">
       <button class="btn" id="newCancel">やめる</button>
       <button class="btn primary" id="newStart">対局開始</button>
@@ -381,7 +375,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   // ---- 状態（保存対象）
   const firstHuman = Math.random() < .5 ? 0 : 1; // 初回もふり駒
-  let st = { startSfen: E.START_SFEN, moves: [], human: firstHuman, level: 2, flipped: firstHuman === 1, lastEval: null, sidePref: 'r', evals: [] };
+  let st = { startSfen: E.START_SFEN, moves: [], human: firstHuman, level: 4, flipped: firstHuman === 1, lastEval: null, sidePref: 'r', evals: [] };
   let furigomaNote = '';
   let review = null;   // 振り返り中: {ply, mvs, pos}
   let anaId = 0, anaRunning = false;
@@ -435,7 +429,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       thinking = false;
       if (typeof d.score === 'number') {
         st.lastEval = -d.score; // あなたから見た値
-        st.evals[st.moves.length] = { s: game.side === 0 ? d.score : -d.score, best: d.move }; // 先手から見た値
+        st.evals[st.moves.length] = { s: game.side === 0 ? d.score : -d.score, best: d.move, a: 1 }; // 先手から見た値・最強設定の読み
       }
       if (d.declare) { game.declare(); st.result = game.result; save(); render(); showResult(); return; }
       const m = d.move && E.parseUSI(game.pos, d.move);
@@ -599,7 +593,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       else if (review.ply === 0) kifEl.scrollTop = 0;
       renderReview();
     } else kifEl.scrollTop = kifEl.scrollHeight;
-    $('kifuTitle').textContent = `棋譜（${game.kif.length}手） ${st.human ? 'AI ▲ − あなた △' : 'あなた ▲ − AI △'} ・ ${LEVELS[st.level].name}`;
+    $('kifuTitle').textContent = `棋譜（${game.kif.length}手） ${st.human ? 'AI ▲ − あなた △' : 'あなた ▲ − AI △'}`;
   }
 
   function renderHand(el, side) {
@@ -614,7 +608,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 
   // ---- 振り返り
-  const ANA_MS = 300; // 振り返り解析の1局面あたりの思考時間
+  const ANA_MS = LEVELS[4].opts.timeMs; // 振り返りも対局と同じ最強設定で読む
   const winp = sc => 1 / (1 + Math.exp(-sc / 600));
 
   function posAt(p) {
@@ -732,38 +726,47 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     $('reviewInfo').innerHTML = lines.join('<br>');
   }
 
-  // 全局面をAIで解析して評価値と推奨手を埋める
-  let anaHandler = null;
-  function onAna(d) { if (anaHandler) anaHandler(d); }
+  // 全局面をAIで解析して評価値と推奨手を埋める（最強設定。端末のコア数に応じて並列に読む）
+  let anaPool = [];
+  function onAna(d) {}
   function startAnalysis() {
     const n = st.moves.length, need = [];
     for (let p = 0; p <= n; p++) if (!(st.evals[p] && st.evals[p].a)) need.push(p);
     if (!need.length) { $('anaStatus').textContent = '解析済み'; return; }
     const id = ++anaId;
     let done = n + 1 - need.length;
-    $('anaStatus').textContent = `AIが解析中 ${done}/${n + 1}`;
+    const left = () => Math.ceil((n + 1 - done) / Math.max(1, anaPool.length || 1) * ANA_MS / 1000 / 60);
+    const status = () => { $('anaStatus').textContent = `AIが解析中 ${done}/${n + 1}（残り約${left()}分）`; };
     anaRunning = true;
     const onResult = d => {
       if (d.id !== anaId) return;
-      if (d.done) { anaRunning = false; $('anaStatus').textContent = '解析済み'; save(); if (review) render(); return; }
       st.evals[d.ply] = { s: d.s, best: d.best, a: 1 };
       done++;
-      $('anaStatus').textContent = `AIが解析中 ${done}/${n + 1}`;
-      if (done % 4 === 0) save();
+      if (done >= n + 1) { stopAnalysis(); $('anaStatus').textContent = '解析済み'; save(); if (review) render(); return; }
+      status();
+      save();
       if (review) render();
     };
-    if (worker) {
-      anaHandler = onResult;
-      worker.postMessage({ ana: true, id, sfen: st.startSfen, moves: st.moves.slice(), plies: need, timeMs: ANA_MS });
+    const k = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1, need.length));
+    try {
+      for (let i = 0; i < k; i++) {
+        const w = new Worker('ai_worker.js');
+        w.onmessage = e => { if (e.data.ana && !e.data.done) onResult(e.data); };
+        // 局面を間引きながら割り振る（先に全体の形が見えるように）
+        const mine = need.filter((_, j) => j % k === i);
+        w.postMessage({ ana: true, id, sfen: st.startSfen, moves: st.moves.slice(), plies: mine, timeMs: ANA_MS });
+        anaPool.push(w);
+      }
+      status();
       return;
-    }
+    } catch (e) { anaPool.forEach(w => w.terminate()); anaPool = []; }
     // Worker が使えない環境: 画面側で1局面ずつ
     localSearcher = localSearcher || new E.Searcher(18);
-    let k = 0;
+    let q = 0;
+    status();
     const step = () => {
-      if (id !== anaId) return;
-      if (k >= need.length) { onResult({ id, done: true }); return; }
-      const ply = need[k++], pos = posAt(ply);
+      if (id !== anaId || q >= need.length) return;
+      const ply = need[q++], pos = posAt(ply);
       const r = localSearcher.search(pos, { timeMs: ANA_MS });
       onResult({ id, ply, s: pos.side === 0 ? r.score : -r.score, best: r.move ? E.moveToUSI(r.move) : null });
       setTimeout(step, 10);
@@ -772,7 +775,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
   function stopAnalysis() {
     anaId++;
-    if (anaRunning && worker) { worker.terminate(); makeWorker(); }
+    anaPool.forEach(w => w.terminate()); anaPool = [];
     anaRunning = false;
   }
 
@@ -784,6 +787,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const youVal = sc => (st.human === 0 ? sc : -sc);
 
   function clearCand() {
+    if (cand && cand.timer) clearInterval(cand.timer);
     sel = null; targets.clear(); rvPick = -1; cand = null; candId++;
     if (candBusy && candWorker) { candWorker.terminate(); candWorker = null; }
     candBusy = false;
@@ -806,34 +810,30 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     for (const ms of targets.values()) for (const m of ms) usis.push(E.moveToUSI(m));
     if (!usis.length) return;
     const id = ++candId;
-    cand = { id, evals: new Map(), total: usis.length };
-    const timeMs = usis.length > 24 ? 60 : usis.length > 10 ? 100 : 160;
+    // 対局と同じ最強設定の思考時間で、この駒の手だけをまとめて全幅に読む
+    const timeMs = LEVELS[4].opts.timeMs;
+    cand = { id, evals: new Map(), total: usis.length, started: Date.now(), timeMs };
     const onResult = d => {
       if (d.id !== candId || !cand) return;
-      if (d.done) { candBusy = false; render(); return; }
+      if (d.done) { candBusy = false; clearInterval(cand.timer); cand.finished = true; render(); return; }
       cand.evals.set(d.usi, d.s);
-      render();
     };
+    cand.timer = setInterval(() => { if (review && cand && cand.id === id && !cand.finished) render(); }, 1000);
     try {
       if (!candWorker) { candWorker = new Worker('ai_worker.js'); candWorker.onmessage = e => onResult(e.data); }
       candBusy = true;
       candWorker.postMessage({ cand: true, id, sfen: st.startSfen, moves: st.moves.slice(0, review.ply), cands: usis, timeMs });
       return;
     } catch (e) { candWorker = null; }
-    // Worker が使えない環境: 画面側で1手ずつ
-    localSearcher = localSearcher || new E.Searcher(18);
-    let k = 0;
-    const step = () => {
+    // Worker が使えない環境: 画面側で読む（その間は画面が止まる）
+    setTimeout(() => {
       if (id !== candId) return;
-      if (k >= usis.length) { onResult({ id, done: true }); return; }
-      const pos = posAt(review.ply), m = E.parseUSI(pos, usis[k]);
-      pos.make(m);
-      const r = localSearcher.search(pos, { timeMs });
-      const sc = r.declare ? E.MATE : r.score;
-      onResult({ id, usi: usis[k++], s: pos.side === 0 ? sc : -sc });
-      setTimeout(step, 10);
-    };
-    setTimeout(step, 10);
+      localSearcher = localSearcher || new E.Searcher(18);
+      const pos = posAt(review.ply);
+      const r = localSearcher.search(pos, { timeMs, only: usis.map(u => E.parseUSI(pos, u)), multi: true });
+      for (const [m, sc] of r.scores || []) onResult({ id, usi: E.moveToUSI(m), s: pos.side === 0 ? sc : -sc });
+      onResult({ id, done: true });
+    }, 30);
   }
   // 行き先 sq の手の中で、指す側にとって一番良い値
   function bestAt(sq) {
@@ -851,15 +851,14 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return (v > 0 ? '+' : '') + v;
   }
   function candLabel(sq) {
-    const v = bestAt(sq);
+    const v = cand && cand.finished ? bestAt(sq) : null;
     if (v === null) return '<span class="cand wait">…</span>';
     const mover = review.pos.side;
     let overall = null;
     for (const t of targets.keys()) { const b = bestAt(t); if (b !== null && (overall === null || moverVal(b, mover) > moverVal(overall, mover))) overall = b; }
     const played = st.moves[review.ply];
     const isPlayed = (targets.get(sq) || []).some(m => E.moveToUSI(m) === played);
-    const done = cand && cand.evals.size === cand.total;
-    const cls = 'cand' + (done && v === overall ? ' best' : '') + (isPlayed ? ' played' : '');
+    const cls = 'cand' + (v === overall ? ' best' : '') + (isPlayed ? ' played' : '');
     return `<span class="${cls}">${shortEval(v)}</span>`;
   }
   function candInfoLines() {
@@ -867,13 +866,18 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const out = [];
     const n = cand.evals.size, pos = review.pos, mover = pos.side;
     const prevTo = review.ply ? (review.mvs[review.ply - 1] >> 7) & 127 : -1;
-    out.push(`<span style="color:var(--muted)">駒の行き先ごとのAI評価値（あなたから見た値・枠付きが実戦の手）${n < cand.total ? ` 計算中 ${n}/${cand.total}` : ''}</span>`);
+    if (!cand.finished) {
+      const rest = Math.max(0, Math.ceil((cand.timeMs - (Date.now() - cand.started)) / 1000));
+      out.push(`<span style="color:var(--muted)">AIがこの駒の手を最強設定で読んでいます（あと約${rest}秒）</span>`);
+      return out;
+    }
+    out.push('<span style="color:var(--muted)">駒の行き先ごとのAI評価値（あなたから見た値・枠付きが実戦の手）</span>');
     let bestM = null, bestV = null;
     for (const ms of targets.values()) for (const m of ms) {
       const v = cand.evals.get(E.moveToUSI(m));
       if (v !== undefined && (bestV === null || moverVal(v, mover) > moverVal(bestV, mover))) { bestV = v; bestM = m; }
     }
-    if (bestM && n === cand.total) out.push(`この駒の最善: ${E.moveToKif(pos, bestM, prevTo).replace(/\(\d\d\)$/, '')} → ${fmtEval(bestV)}`);
+    if (bestM) out.push(`この駒の最善: ${E.moveToKif(pos, bestM, prevTo).replace(/\(\d\d\)$/, '')} → ${fmtEval(bestV)}`);
     if (rvPick >= 0 && targets.has(rvPick)) {
       for (const m of targets.get(rvPick)) {
         const v = cand.evals.get(E.moveToUSI(m));
@@ -957,16 +961,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   };
 
   // ---- 新規対局シート
-  let draft = { side: '0', level: 2 };
+  let draft = { side: 'r', level: 4 }; // AIの強さは最強のみ
   function syncSeg() {
     $('segSide').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === draft.side)));
-    $('segLevel').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.v === draft.level)));
-    $('levelNote').textContent = LEVELS[draft.level].note;
   }
   $('segSide').onclick = e => { const b = e.target.closest('button'); if (b) { draft.side = b.dataset.v; syncSeg(); } };
-  $('segLevel').onclick = e => { const b = e.target.closest('button'); if (b) { draft.level = +b.dataset.v; syncSeg(); } };
   function openNew() {
-    draft = { side: st.sidePref || 'r', level: st.level };
+    draft = { side: st.sidePref || 'r', level: 4 };
     syncSeg(); $('ovNew').hidden = false; $('newStart').focus();
   }
   $('btnNew').onclick = openNew;
@@ -1005,6 +1006,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const saved = (data && data.st) || load();
     if (saved) st = Object.assign(st, saved);
     if (!Array.isArray(st.evals)) st.evals = [];
+    st.level = 4; // AIの強さは最強のみ（以前の保存データも最強にそろえる）
     makeWorker();
     rebuild(); render();
     if (game.result) showResult();

@@ -34,16 +34,12 @@ self.onmessage = (e) => {
     return;
   }
   if (d.cand) {
-    // 振り返り: 候補手を1手ずつ指して局面を読み、先手から見た評価値を返す
+    // 振り返り: 候補手だけを対局と同じ思考時間で全幅に読み、各手の評価値（先手から見た値）を返す
     const pos = replay(d.sfen, d.moves, d.moves.length);
-    for (const u of d.cands) {
-      const m = E.parseUSI(pos, u);
-      if (!m) continue;
-      pos.make(m);
-      const r = searcher.search(pos, { timeMs: d.timeMs });
-      const sc = r.declare ? E.MATE : r.score;
-      self.postMessage({ cand: true, id: d.id, usi: u, s: pos.side === 0 ? sc : -sc });
-      pos.unmake();
+    const only = d.cands.map(u => E.parseUSI(pos, u)).filter(Boolean);
+    const r = searcher.search(pos, { timeMs: d.timeMs, only, multi: true });
+    for (const [m, sc] of r.scores || []) {
+      self.postMessage({ cand: true, id: d.id, usi: E.moveToUSI(m), s: pos.side === 0 ? sc : -sc });
     }
     self.postMessage({ cand: true, id: d.id, done: true });
     return;

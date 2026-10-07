@@ -1,7 +1,7 @@
 // オフライン用 Service Worker。一度開けば以降は通信なしで起動できる。
 // 通信できる時は常に最新のファイルを取りに行き（更新がすぐ反映される）、圏外ならキャッシュで動く。
 // アプリを更新したら VERSION を上げる。
-const VERSION = 'pocket-shogi-v7';
+const VERSION = 'pocket-shogi-v9';
 const APP_FILES = [
   './', './index.html', './shogi_engine.js', './ai_worker.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png',
