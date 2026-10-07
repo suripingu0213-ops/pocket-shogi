@@ -324,7 +324,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const ZEN = '０１２３４５６７８９', KAN = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
   // ---- 状態（保存対象）
-  let st = { startSfen: E.START_SFEN, moves: [], human: 0, level: 2, flipped: false, lastEval: null };
+  const firstHuman = Math.random() < .5 ? 0 : 1; // 初回もふり駒
+  let st = { startSfen: E.START_SFEN, moves: [], human: firstHuman, level: 2, flipped: firstHuman === 1, lastEval: null, sidePref: 'r' };
+  let furigomaNote = '';
   let game = null;
   let sel = null;          // {sq} or {drop: pt}
   let targets = new Map(); // to -> [moves]
@@ -506,8 +508,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     turn.className = 'turn' + (thinking ? ' thinking' : you && !game.result ? ' mine' : '');
     $('turnText').textContent = game.result ? '終局' : thinking ? 'AIが考えています' : you ? 'あなたの番' : 'AIの番';
     const ev = st.lastEval;
-    $('evalv').textContent = ev === null || ev === undefined ? '' :
-      Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`;
+    if (st.moves.length > 2) furigomaNote = '';
+    $('evalv').textContent = furigomaNote || (ev === null || ev === undefined ? '' :
+      Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`);
 
     // ボタン
     $('btnUndo').disabled = !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
@@ -615,7 +618,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   $('segSide').onclick = e => { const b = e.target.closest('button'); if (b) { draft.side = b.dataset.v; syncSeg(); } };
   $('segLevel').onclick = e => { const b = e.target.closest('button'); if (b) { draft.level = +b.dataset.v; syncSeg(); } };
   function openNew() {
-    draft = { side: String(st.human), level: st.level };
+    draft = { side: st.sidePref || 'r', level: st.level };
     syncSeg(); $('ovNew').hidden = false; $('newStart').focus();
   }
   $('btnNew').onclick = openNew;
@@ -624,7 +627,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     $('ovNew').hidden = true;
     if (thinking) cancelAI();
     const human = draft.side === 'r' ? (Math.random() < .5 ? 0 : 1) : +draft.side;
-    st = { startSfen: E.START_SFEN, moves: [], human, level: draft.level, flipped: human === 1, lastEval: null };
+    st = { startSfen: E.START_SFEN, moves: [], human, level: draft.level, flipped: human === 1, lastEval: null, sidePref: draft.side };
+    furigomaNote = draft.side === 'r' ? `ふり駒: あなたは${human ? '後手 △' : '先手 ▲'}` : '';
     sel = null; targets.clear();
     rebuild(); save(); render();
     if (game.side !== st.human) askAI();
