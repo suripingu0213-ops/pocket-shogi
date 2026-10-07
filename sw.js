@@ -1,22 +1,43 @@
 // オフライン用 Service Worker。一度開けば以降は通信なしで起動できる。
-// アプリを更新したら VERSION を上げる（古いキャッシュが消えて新しいファイルに入れ替わる）。
-const VERSION = 'pocket-shogi-v5';
+// 通信できる時は常に最新のファイルを取りに行き（更新がすぐ反映される）、圏外ならキャッシュで動く。
+// アプリを更新したら VERSION を上げる。
+const VERSION = 'pocket-shogi-v6';
 const APP_FILES = [
   './', './index.html', './shogi_engine.js', './ai_worker.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png',
 ];
+const NET_TIMEOUT_MS = 3000; // 電波が弱い時はこれ以上待たずにキャッシュを使う
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(APP_FILES)).then(() => self.skipWaiting()));
+  // ブラウザのHTTPキャッシュ（GitHub Pages は10分）を通さず最新を取る
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => c.addAll(APP_FILES.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
+
+function networkFirst(req) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const fromCache = () => caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req));
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(fromCache()); } }, NET_TIMEOUT_MS);
+    fetch(req, { cache: 'no-cache' }).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
+      if (!settled) { settled = true; clearTimeout(timer); resolve(res); }
+    }).catch(() => {
+      if (!settled) { settled = true; clearTimeout(timer); resolve(fromCache()); }
+    });
+  });
+}
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
@@ -32,11 +53,5 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.origin !== location.origin) return;
-  // アプリ本体: キャッシュ優先（電車内の圏外でも動く）
-  e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req).then((res) => {
-      if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
-      return res;
-    }))
-  );
+  e.respondWith(networkFirst(req));
 });

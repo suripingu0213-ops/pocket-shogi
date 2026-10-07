@@ -66,7 +66,7 @@
 [hidden] { display: none !important; }
 html, body { height: 100%; }
 /* ダブルタップでの拡大を止める（盤を素早くタップしても画面が拡大しない） */
-html, body, button, .cell, .hpiece { touch-action: manipulation; }
+*, *::before, *::after { touch-action: manipulation; }
 body {
   margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui);
   font-size: 14px; -webkit-tap-highlight-color: transparent;
@@ -81,6 +81,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- 上部バー */
 .topbar { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.brand .ver { font-family: var(--font-ui); font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
 .brand { font-family: var(--font-koma); font-weight: 800; font-size: 18px; letter-spacing: .08em; white-space: nowrap; }
 .status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; justify-content: flex-end; font-size: 13px; color: var(--muted); }
 .status .turn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); white-space: nowrap; }
@@ -245,7 +246,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋</div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v6</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -893,7 +894,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   // オフライン起動用（https か localhost で開いた時だけ有効）
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').then(reg => reg.update()).catch(() => {});
+    });
+    // 新しい版が届いたら1回だけ読み込み直して切り替える（対局は保存済みなので続きから再開）
+    let reloaded = false;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded || thinking) return;
+      reloaded = true; location.reload();
+    });
   }
 })();
 </script>
