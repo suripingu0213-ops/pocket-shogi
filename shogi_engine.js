@@ -417,8 +417,44 @@
       return { result, points, pieces, kingInZone: inZone(k), inCheck: this.inCheck() };
     }
 
-    // ---- 評価関数（手番側から見た点数）
+    // ---- 評価関数（手番側から見た点数）。学習済みKP重みがあればそれを使う。
     evaluate() {
+      return this.kpw && this.king[0] >= 0 && this.king[1] >= 0 ? this.evaluateKP() : this.evaluateHand();
+    }
+
+    // 学習済み KP 評価（training/kp_features.py と同じ特徴量定義）
+    evaluateKP() {
+      const W = this.kpw, b = this.board;
+      const ob = this.king[0] * KP_P, ow = (80 - this.king[1]) * KP_P;
+      let sb = 0, sw = 0;
+      for (let sq = 0; sq < 81; sq++) {
+        const p = b[sq];
+        if (!p || p === OU || p === -OU) continue;
+        if (p > 0) {
+          const i = KP_PT_IDX[p];
+          sb += W[ob + i * 81 + sq];
+          sw += W[ow + (13 + i) * 81 + 80 - sq];
+        } else {
+          const i = KP_PT_IDX[-p];
+          sb += W[ob + (13 + i) * 81 + sq];
+          sw += W[ow + i * 81 + 80 - sq];
+        }
+      }
+      for (let owner = 0; owner < 2; owner++) {
+        const h = this.hand[owner];
+        const bBase = ob + KP_BOARD + (owner ? KP_HAND_PER : 0);
+        const wBase = ow + KP_BOARD + (owner ? 0 : KP_HAND_PER);
+        for (let pt = 1; pt <= 7; pt++) {
+          const n = Math.min(h[pt], KP_HAND_MAX[pt]);
+          const o = KP_HAND_OFF[pt];
+          for (let i = 0; i < n; i++) { sb += W[bBase + o + i]; sw += W[wBase + o + i]; }
+        }
+      }
+      const e = sb - sw;
+      return (this.side ? -e : e) + this.kpTempo;
+    }
+
+    evaluateHand() {
       const b = this.board, kB = this.king[0], kW = this.king[1];
       let sc = 0;
       for (let sq = 0; sq < 81; sq++) {
@@ -442,6 +478,20 @@
       for (let pt = 1; pt <= 7; pt++) sc += (this.hand[0][pt] - this.hand[1][pt]) * HAND_VAL[pt];
       return this.side ? -sc : sc;
     }
+  }
+
+  // ---------------------------------------------------------------- 学習済み KP 評価の定義
+  const KP_PT_IDX = [0, 0, 1, 2, 3, 4, 5, 6, 0, 7, 8, 9, 10, 11, 12];
+  const KP_HAND_MAX = [0, 18, 4, 4, 4, 4, 2, 2];
+  const KP_HAND_OFF = [0, 0, 18, 22, 26, 30, 34, 36];
+  const KP_HAND_PER = 38, KP_BOARD = 2106, KP_P = 2182;
+  Position.prototype.kpw = null;
+  Position.prototype.kpTempo = 0;
+  // eval_kp.bin（Int16 81×P + TEMPO）を読み込んだ ArrayBuffer から重みを作る
+  function loadKPWeights(buf) {
+    const all = new Int16Array(buf);
+    if (all.length !== 81 * KP_P + 1) throw new Error('評価関数ファイルの大きさが違います');
+    return { w: all.subarray(0, 81 * KP_P), tempo: all[81 * KP_P] };
   }
 
   // ---------------------------------------------------------------- 評価値テーブル
@@ -574,6 +624,8 @@
     search(pos, opts) {
       opts = opts || {};
       this.pos = pos;
+      const kp = opts.kp !== undefined ? opts.kp : this.kp; // {w, tempo} または null
+      pos.kpw = kp ? kp.w : null; pos.kpTempo = kp ? kp.tempo : 0;
       this.nodes = 0; this.stop = false;
       this.deadline = Date.now() + (opts.timeMs || 1000);
       this.killers.fill(0);
@@ -805,6 +857,7 @@
     FU, KY, KE, GI, KI, KA, HI, OU, TO, NY, NK, NG, UM, RY, BLACK, WHITE,
     PROMOTE, UNPROMOTE, PIECE_KANJI, PIECE_KANJI1, START_SFEN, MATE, MATE_BOUND,
     Position, Game, Searcher,
+    loadKPWeights,
     mkMove, mFrom, mTo, mPromo, isDrop, moveToUSI, parseUSI, moveToKif,
     sqFile, sqRank, sqOf, relRow,
   };
