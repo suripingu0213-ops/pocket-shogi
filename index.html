@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ポケット将棋</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2c4683">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ポケット将棋">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* レイアウト: 縦画面1カラム。上=相手の持ち駒、中央=榧の盤、下=自分の持ち駒、その下に操作と棋譜 */
+:root {
+  --bg: #eceef2;
+  --fg: #1c2230;
+  --muted: #5b6377;
+  --panel: #ffffff;
+  --line: #d3d8e2;
+  --accent: #2c4683;         /* 藍 */
+  --accent-fg: #ffffff;
+  --danger: #a3321f;
+  --wood: #e2b768;           /* 榧 */
+  --wood-dark: #cf9f4d;
+  --wood-line: #5f4218;
+  --koma: #f4dca6;
+  --koma-shade: #d9b46d;
+  --koma-ink: #1b1309;
+  --koma-red: #b0261b;
+  --hl-select: rgba(44, 70, 131, .38);
+  --hl-target: rgba(44, 70, 131, .55);
+  --hl-last: rgba(255, 214, 64, .45);
+  --hl-check: rgba(200, 40, 30, .45);
+  --shadow: 0 1px 2px rgba(20, 24, 36, .12), 0 6px 18px rgba(20, 24, 36, .08);
+  --font-koma: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  --font-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151c; --fg: #e6e8ee; --muted: #9aa2b5; --panel: #1b2029; --line: #2b3240;
+    --accent: #8ea6e6; --accent-fg: #0f1420; --danger: #ef7d68;
+    --wood: #c8994e; --wood-dark: #b48740; --wood-line: #3d2a0e;
+    --koma: #ecd29a; --koma-shade: #c9a25c;
+    --hl-select: rgba(142, 166, 230, .45); --hl-target: rgba(60, 90, 170, .6);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 18px rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151c; --fg: #e6e8ee; --muted: #9aa2b5; --panel: #1b2029; --line: #2b3240;
+  --accent: #8ea6e6; --accent-fg: #0f1420; --danger: #ef7d68;
+  --wood: #c8994e; --wood-dark: #b48740; --wood-line: #3d2a0e;
+  --koma: #ecd29a; --koma-shade: #c9a25c;
+  --hl-select: rgba(142, 166, 230, .45); --hl-target: rgba(60, 90, 170, .6);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 18px rgba(0, 0, 0, .3);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui);
+  font-size: 14px; -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app {
+  max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 10px 24px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+/* ---- 上部バー */
+.topbar { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.brand { font-family: var(--font-koma); font-weight: 800; font-size: 18px; letter-spacing: .08em; white-space: nowrap; }
+.status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; justify-content: flex-end; font-size: 13px; color: var(--muted); }
+.status .turn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); white-space: nowrap; }
+.status .turn.mine { border-color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.mine .dot { background: var(--accent); }
+.thinking .dot { animation: pulse 1s ease-in-out infinite; background: var(--accent); }
+@keyframes pulse { 50% { opacity: .25; } }
+.evalv { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- 持ち駒 */
+.hand {
+  display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 4px 8px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
+.hand .who { font-size: 12px; color: var(--muted); white-space: nowrap; width: 3.4em; }
+.hand .pieces { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; min-width: 0; }
+.hand .empty { font-size: 12px; color: var(--muted); }
+.hpiece {
+  position: relative; width: 36px; height: 38px; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 6px;
+}
+.hpiece.sel { background: var(--hl-select); }
+.hpiece .koma { font-size: 21px; }
+.hpiece .cnt {
+  position: absolute; right: -3px; bottom: -2px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px;
+  background: var(--fg); color: var(--bg); font-size: 11px; line-height: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.hand.theirs .hpiece { cursor: default; }
+
+/* ---- 盤 */
+.boardwrap { display: flex; justify-content: center; }
+.board-frame {
+  width: min(100%, calc((100dvh - 250px) * 0.94)); min-width: 280px; max-width: 100%;
+  background: linear-gradient(160deg, var(--wood), var(--wood-dark));
+  border-radius: 6px; padding: 4px 18px 8px 8px; box-shadow: var(--shadow); position: relative;
+}
+.files { display: grid; grid-template-columns: repeat(9, 1fr); font-size: 11px; color: var(--wood-line); text-align: center; height: 14px; line-height: 14px; font-variant-numeric: tabular-nums; }
+.ranks { position: absolute; right: 2px; top: 18px; bottom: 8px; width: 14px; display: grid; grid-template-rows: repeat(9, 1fr); font-size: 11px; color: var(--wood-line); align-items: center; text-align: center; }
+.board {
+  display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(9, 1fr);
+  aspect-ratio: 33 / 36; /* 将棋盤の升は縦長（約 11:12） */ border: 2px solid var(--wood-line);
+}
+.cell {
+  position: relative; border: 0; padding: 0; margin: 0; background: transparent; cursor: pointer;
+  border-right: 1px solid var(--wood-line); border-bottom: 1px solid var(--wood-line);
+  display: flex; align-items: center; justify-content: center; min-width: 0;
+}
+.cell:nth-child(9n) { border-right: 0; }
+.cell:nth-child(n+73) { border-bottom: 0; }
+.cell.last { background: var(--hl-last); }
+.cell.sel { background: var(--hl-select); }
+.cell.check { background: var(--hl-check); }
+.cell.target::after {
+  content: ""; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: var(--hl-target); pointer-events: none;
+}
+.cell.target.occupied::after { width: 86%; height: 90%; border-radius: 4px; background: transparent; border: 3px solid var(--hl-target); }
+.hoshi { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--wood-line); right: -3px; bottom: -3px; z-index: 1; pointer-events: none; }
+
+/* ---- 駒（五角形） */
+.koma {
+  --s: 1;
+  width: 86%; height: 92%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-koma); font-weight: 800; color: var(--koma-ink);
+  font-size: clamp(14px, 5.6vw, 27px); line-height: 1; padding-top: 10%;
+  background: linear-gradient(180deg, var(--koma), var(--koma-shade));
+  clip-path: polygon(50% 0, 86% 16%, 100% 100%, 0 100%, 14% 16%);
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .25));
+  pointer-events: none; user-select: none;
+}
+.koma.small { font-size: clamp(12px, 4.4vw, 22px); letter-spacing: -.05em; }
+.koma.promoted { color: var(--koma-red); }
+.koma.rev { transform: rotate(180deg); padding-top: 0; padding-bottom: 10%; }
+.cell .koma.moved { animation: drop .18s ease-out; }
+@keyframes drop { from { transform: scale(1.12); } }
+.cell .koma.rev.moved { animation: droprev .18s ease-out; }
+@keyframes droprev { from { transform: rotate(180deg) scale(1.12); } }
+
+/* ---- 操作 */
+.controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.btn {
+  min-height: 42px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); cursor: pointer;
+  font-weight: 500; font-size: 13px; padding: 6px 4px;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.warn { color: var(--danger); }
+.btn.declare { grid-column: 1 / -1; border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+/* ---- 棋譜 */
+.kifu { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.kifu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.kifu-head h2 { font-size: 13px; margin: 0; font-weight: 700; color: var(--muted); letter-spacing: .06em; }
+.linkbtn { border: 0; background: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 4px; }
+.kifu ol {
+  list-style: none; margin: 0; padding: 0; max-height: 150px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 2px 10px;
+  font-variant-numeric: tabular-nums; font-size: 13px;
+}
+.kifu li { display: flex; gap: 6px; white-space: nowrap; }
+.kifu li .n { color: var(--muted); width: 2.2em; text-align: right; flex: none; }
+.kifu .none { color: var(--muted); font-size: 12px; grid-column: 1 / -1; white-space: normal; }
+
+/* ---- モーダル */
+.overlay {
+  position: fixed; inset: 0; background: rgba(10, 12, 18, .45); display: flex; align-items: flex-end; justify-content: center;
+  padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 10;
+}
+.sheet {
+  width: 100%; max-width: 440px; background: var(--panel); color: var(--fg); border-radius: 16px; padding: 18px;
+  box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px;
+}
+.sheet h3 { margin: 0; font-size: 17px; font-family: var(--font-koma); font-weight: 800; text-wrap: balance; }
+.sheet p { margin: 0; color: var(--muted); line-height: 1.6; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; background: var(--bg); padding: 4px; border-radius: 10px; }
+.seg button { border: 0; border-radius: 7px; min-height: 38px; background: transparent; cursor: pointer; font-size: 13px; padding: 4px 2px; }
+.seg button[aria-pressed="true"] { background: var(--panel); box-shadow: var(--shadow); font-weight: 700; color: var(--accent); }
+.levelnote { font-size: 12px; color: var(--muted); min-height: 1.4em; }
+.row { display: flex; gap: 8px; }
+.row .btn { flex: 1; }
+.promo-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.promo-choices button { min-height: 92px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+.promo-choices .koma { width: 46px; height: 50px; font-size: 26px; }
+.promo-choices .koma.small { font-size: 20px; }
+.result-big { font-family: var(--font-koma); font-size: 28px; font-weight: 800; }
+
+@media (prefers-reduced-motion: reduce) { .thinking .dot, .cell .koma.moved, .cell .koma.rev.moved { animation: none; } }
+@media (min-width: 520px) { .koma { font-size: 27px; } .koma.small { font-size: 21px; } }
+.app { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand">ポケット将棋</div>
+    <div class="status">
+      <span class="evalv" id="evalv"></span>
+      <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
+    </div>
+  </header>
+
+  <section class="hand theirs" id="handTop" aria-label="相手の持ち駒"></section>
+  <div class="boardwrap">
+    <div class="board-frame">
+      <div class="files" id="files"></div>
+      <div class="board" id="board" role="grid" aria-label="将棋盤"></div>
+      <div class="ranks" id="ranks"></div>
+    </div>
+  </div>
+  <section class="hand mine" id="handBottom" aria-label="自分の持ち駒"></section>
+
+  <nav class="controls">
+    <button class="btn" id="btnUndo">待った</button>
+    <button class="btn" id="btnFlip">盤反転</button>
+    <button class="btn warn" id="btnResign">投了</button>
+    <button class="btn primary" id="btnNew">新しい対局</button>
+    <button class="btn declare" id="btnDeclare" hidden>入玉宣言する</button>
+  </nav>
+
+  <section class="kifu">
+    <div class="kifu-head">
+      <h2 id="kifuTitle">棋譜</h2>
+      <button class="linkbtn" id="btnCopy">KIF形式でコピー</button>
+    </div>
+    <ol id="kifu"></ol>
+    <textarea id="copyFallback" hidden readonly style="width:100%;height:120px;margin-top:6px;font-size:12px"></textarea>
+  </section>
+</div>
+
+<div class="overlay" id="ovNew" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="newTitle">
+    <h3 id="newTitle">新しい対局</h3>
+    <div class="field">
+      <span>あなたの手番</span>
+      <div class="seg" id="segSide">
+        <button data-v="0">先手 ▲</button><button data-v="1">後手 △</button><button data-v="r">ふり駒</button>
+      </div>
+    </div>
+    <div class="field">
+      <span>AIの強さ</span>
+      <div class="seg" id="segLevel">
+        <button data-v="0">入門</button><button data-v="1">初級</button><button data-v="2">中級</button><button data-v="3">上級</button><button data-v="4">最強</button>
+      </div>
+      <div class="levelnote" id="levelNote"></div>
+    </div>
+    <div class="row">
+      <button class="btn" id="newCancel">やめる</button>
+      <button class="btn primary" id="newStart">対局開始</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ovPromo" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="promoTitle">
+    <h3 id="promoTitle">成りますか？</h3>
+    <div class="promo-choices">
+      <button id="promoYes"></button>
+      <button id="promoNo"></button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ovConfirm" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle"></h3>
+    <p id="confirmText"></p>
+    <div class="row">
+      <button class="btn" id="confirmNo">やめる</button>
+      <button class="btn primary" id="confirmYes"></button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="ovResult" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="resultTitle">
+    <div class="result-big" id="resultTitle"></div>
+    <p id="resultText"></p>
+    <div class="row">
+      <button class="btn" id="resultClose">盤面を見る</button>
+      <button class="btn primary" id="resultNew">もう一局</button>
+    </div>
+  </div>
+</div>
+
+<script src="shogi_engine.js" charset="utf-8"></script>
+<script>
+(function () {
+  'use strict';
+  const E = ShogiEngine;
+  const $ = id => document.getElementById(id);
+  const STORE_KEY = 'pocket-shogi-v1';
+
+  const LEVELS = [
+    { name: '入門', opts: { maxDepth: 1, noise: 500, timeMs: 400 }, note: 'ほぼ1手先だけ見て、わざと迷いながら指します' },
+    { name: '初級', opts: { maxDepth: 2, noise: 160, timeMs: 600 }, note: '2手先まで読みます。駒の取り合いに弱めです' },
+    { name: '中級', opts: { timeMs: 1000 }, note: '1手1秒ほど考えます' },
+    { name: '上級', opts: { timeMs: 3000 }, note: '1手3秒ほど考えます' },
+    { name: '最強', opts: { timeMs: 8000 }, note: '1手8秒ほど考えます。電池を多めに使います' },
+  ];
+  const HAND_ORDER = [E.HI, E.KA, E.KI, E.GI, E.KE, E.KY, E.FU];
+  const ZEN = '０１２３４５６７８９', KAN = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+  // ---- 状態（保存対象）
+  let st = { startSfen: E.START_SFEN, moves: [], human: 0, level: 2, flipped: false, lastEval: null };
+  let game = null;
+  let sel = null;          // {sq} or {drop: pt}
+  let targets = new Map(); // to -> [moves]
+  let thinking = false, reqId = 0, worker = null, pendingPromo = null, lastAnimTo = -1;
+
+  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(st)); } catch (e) {} }
+  function load() { try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); return s && Array.isArray(s.moves) ? s : null; } catch (e) { return null; } }
+
+  function rebuild() {
+    game = new E.Game(st.startSfen);
+    const ok = [];
+    for (const u of st.moves) {
+      const m = E.parseUSI(game.pos, u);
+      if (!m || game.result) break;
+      game.play(m); ok.push(u);
+    }
+    st.moves = ok;
+  }
+
+  // ---- AI（Web Worker。使えない環境では画面側で探索）
+  function makeWorker() {
+    try { worker = new Worker('ai_worker.js'); worker.onmessage = onAI; worker.onerror = () => { worker = null; }; }
+    catch (e) { worker = null; }
+  }
+  let localSearcher = null;
+  function askAI() {
+    if (game.result || game.side === st.human) return;
+    thinking = true; render();
+    const id = ++reqId, t0 = Date.now();
+    const msg = { id, sfen: st.startSfen, moves: st.moves.slice(), opts: LEVELS[st.level].opts };
+    msg.t0 = t0;
+    if (worker) worker.postMessage(msg);
+    else setTimeout(() => {
+      localSearcher = localSearcher || new E.Searcher(18);
+      const r = localSearcher.search(game.pos, msg.opts);
+      onAI({ data: { id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, t0 } });
+    }, 30);
+    pendingT0 = t0;
+  }
+  let pendingT0 = 0;
+  function onAI(e) {
+    const d = e.data;
+    if (d.id !== reqId) return;
+    const wait = Math.max(0, 350 - (Date.now() - pendingT0)); // 速すぎる応手は少し待つ
+    setTimeout(() => {
+      if (d.id !== reqId) return;
+      thinking = false;
+      if (typeof d.score === 'number') st.lastEval = -d.score; // あなたから見た値
+      if (d.declare) { game.declare(); save(); render(); showResult(); return; }
+      const m = d.move && E.parseUSI(game.pos, d.move);
+      if (!m) { game.resign(); save(); render(); showResult(); return; }
+      commit(m);
+    }, wait);
+  }
+  function cancelAI() {
+    reqId++; thinking = false;
+    if (worker) { worker.terminate(); makeWorker(); }
+  }
+
+  // ---- 着手
+  function commit(m) {
+    game.play(m);
+    st.moves.push(E.moveToUSI(m));
+    lastAnimTo = (m >> 7) & 127;
+    sel = null; targets.clear();
+    save(); render();
+    if (game.result) { setTimeout(showResult, 250); return; }
+    if (game.side !== st.human) askAI();
+  }
+
+  function selectFrom(spec) {
+    sel = spec; targets = new Map();
+    for (const m of game.legalMoves()) {
+      const f = m & 127;
+      if (spec.drop ? f === 80 + spec.drop : f === spec.sq) {
+        const to = (m >> 7) & 127;
+        if (!targets.has(to)) targets.set(to, []);
+        targets.get(to).push(m);
+      }
+    }
+  }
+
+  function onCell(sq) {
+    if (thinking || game.result || game.side !== st.human) return;
+    if (sel && targets.has(sq)) {
+      const ms = targets.get(sq);
+      if (ms.length === 1) commit(ms[0]);
+      else askPromotion(ms);
+      return;
+    }
+    const p = game.pos.board[sq];
+    const mine = p !== 0 && (p > 0 ? 0 : 1) === st.human;
+    if (mine && !(sel && sel.sq === sq)) selectFrom({ sq });
+    else { sel = null; targets.clear(); }
+    render();
+  }
+
+  function onHand(pt) {
+    if (thinking || game.result || game.side !== st.human) return;
+    if (sel && sel.drop === pt) { sel = null; targets.clear(); }
+    else selectFrom({ drop: pt });
+    render();
+  }
+
+  function komaHTML(pt, rev, extraCls) {
+    const ch = pt === E.OU ? (rev === 'gote' ? '王' : '玉') : E.PIECE_KANJI1[pt];
+    const promoted = pt >= E.TO;
+    return `<span class="koma${promoted ? ' promoted' : ''}${extraCls || ''}">${ch}</span>`;
+  }
+
+  function askPromotion(ms) {
+    const pro = ms.find(m => (m >> 14) & 1), non = ms.find(m => !((m >> 14) & 1));
+    const pt = Math.abs(game.pos.board[pro & 127]);
+    $('promoYes').innerHTML = komaHTML(E.PROMOTE[pt]) + '<span>成る</span>';
+    $('promoNo').innerHTML = komaHTML(pt) + '<span>成らない</span>';
+    pendingPromo = { pro, non };
+    $('ovPromo').hidden = false;
+    $('promoYes').focus();
+  }
+  $('promoYes').onclick = () => { $('ovPromo').hidden = true; const p = pendingPromo; pendingPromo = null; if (p) commit(p.pro); };
+  $('promoNo').onclick = () => { $('ovPromo').hidden = true; const p = pendingPromo; pendingPromo = null; if (p) commit(p.non); };
+  $('ovPromo').onclick = e => { if (e.target === $('ovPromo')) { $('ovPromo').hidden = true; pendingPromo = null; } };
+
+  // ---- 描画
+  const boardEl = $('board');
+  const cells = [];
+  for (let v = 0; v < 81; v++) {
+    const b = document.createElement('button');
+    b.className = 'cell'; b.type = 'button';
+    b.addEventListener('click', () => onCell(cells[v].sq));
+    boardEl.appendChild(b);
+    cells.push({ el: b, sq: v });
+  }
+
+  function render() {
+    const pos = game.pos, flipped = st.flipped;
+    const bottom = flipped ? 1 : 0;
+    // 筋・段の表示
+    const files = [], ranks = [];
+    for (let c = 0; c < 9; c++) files.push(`<span>${flipped ? c + 1 : 9 - c}</span>`);
+    for (let r = 0; r < 9; r++) ranks.push(`<span>${KAN[flipped ? 9 - r : r + 1]}</span>`);
+    $('files').innerHTML = files.join(''); $('ranks').innerHTML = ranks.join('');
+
+    const lastM = pos.ply ? pos.stMove[pos.ply - 1] : 0;
+    const lastTo = lastM ? (lastM >> 7) & 127 : -1, lastFrom = lastM && (lastM & 127) < 81 ? lastM & 127 : -1;
+    const checkSq = !game.result || game.result.reason === '詰み' ? (pos.inCheck() ? pos.king[pos.side] : -1) : -1;
+
+    for (let v = 0; v < 81; v++) {
+      const sq = flipped ? 80 - v : v;
+      const c = cells[v]; c.sq = sq;
+      const p = pos.board[sq];
+      const cls = ['cell'];
+      if (sq === lastTo || sq === lastFrom) cls.push('last');
+      if (sel && sel.sq === sq) cls.push('sel');
+      if (sq === checkSq) cls.push('check');
+      if (targets.has(sq)) { cls.push('target'); if (p) cls.push('occupied'); }
+      c.el.className = cls.join(' ');
+      let html = '';
+      if (p) {
+        const owner = p > 0 ? 0 : 1, pt = Math.abs(p);
+        const rev = owner !== bottom;
+        const extra = (rev ? ' rev' : '') + (pt >= E.NY && pt <= E.NG ? ' small' : '') + (sq === lastAnimTo ? ' moved' : '');
+        html = komaHTML(pt, owner ? 'gote' : 'sente', extra);
+      }
+      // 星（3・6筋 × 3・6段の交点）
+      const r = (v / 9) | 0, col = v % 9;
+      if ((r === 2 || r === 5) && (col === 2 || col === 5)) html += '<span class="hoshi"></span>';
+      c.el.innerHTML = html;
+      const name = `${9 - (sq % 9)}${KAN[((sq / 9) | 0) + 1]}`;
+      c.el.setAttribute('aria-label', p ? `${name} ${(p > 0 ? '先手' : '後手')}の${E.PIECE_KANJI[Math.abs(p)]}` : name);
+    }
+    lastAnimTo = -1;
+
+    renderHand($('handTop'), bottom ^ 1);
+    renderHand($('handBottom'), bottom);
+
+    // 手番表示
+    const turn = $('turn'), you = game.side === st.human;
+    turn.className = 'turn' + (thinking ? ' thinking' : you && !game.result ? ' mine' : '');
+    $('turnText').textContent = game.result ? '終局' : thinking ? 'AIが考えています' : you ? 'あなたの番' : 'AIの番';
+    const ev = st.lastEval;
+    $('evalv').textContent = ev === null || ev === undefined ? '' :
+      Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`;
+
+    // ボタン
+    $('btnUndo').disabled = !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
+    $('btnResign').disabled = !!game.result;
+    const decl = !game.result && !thinking && game.side === st.human ? game.pos.declarationStatus() : null;
+    $('btnDeclare').hidden = !(decl && decl.kingInZone);
+
+    // 棋譜
+    const kifEl = $('kifu');
+    kifEl.innerHTML = game.kif.length ? game.kif.map((k, i) => `<li><span class="n">${i + 1}</span><span>${k.replace(/\(\d\d\)$/, '')}</span></li>`).join('')
+      : '<li class="none">まだ指していません。あなたが先手なら盤の駒をタップして始めましょう。</li>';
+    kifEl.scrollTop = kifEl.scrollHeight;
+    $('kifuTitle').textContent = `棋譜（${game.kif.length}手） ${st.human ? 'AI ▲ − あなた △' : 'あなた ▲ − AI △'} ・ ${LEVELS[st.level].name}`;
+  }
+
+  function renderHand(el, side) {
+    const hand = game.pos.hand[side], isMine = side === st.human;
+    const label = (side ? '△' : '▲') + (isMine ? 'あなた' : 'AI');
+    const items = HAND_ORDER.filter(pt => hand[pt]).map(pt =>
+      `<button class="hpiece${sel && sel.drop === pt && isMine ? ' sel' : ''}" data-pt="${pt}" aria-label="持ち駒 ${E.PIECE_KANJI[pt]} ${hand[pt]}枚"${isMine ? '' : ' tabindex="-1"'}>${komaHTML(pt, side ? 'gote' : 'sente', side !== (st.flipped ? 1 : 0) ? ' rev' : '')}${hand[pt] > 1 ? `<span class="cnt">${hand[pt]}</span>` : ''}</button>`);
+    el.innerHTML = `<span class="who">${label}</span><div class="pieces">${items.join('') || '<span class="empty">持ち駒なし</span>'}</div>`;
+    el.className = 'hand ' + (isMine ? 'mine' : 'theirs');
+    if (isMine) el.querySelectorAll('.hpiece').forEach(b => b.onclick = () => onHand(+b.dataset.pt));
+  }
+
+  // ---- 終局表示
+  function showResult() {
+    const r = game.result;
+    if (!r) return;
+    const you = st.human;
+    $('resultTitle').textContent = r.winner === null ? '引き分け' : r.winner === you ? 'あなたの勝ち' : 'AIの勝ち';
+    const by = r.winner === null ? '' : r.winner === you ? 'AI' : 'あなた';
+    const reasonText = {
+      '詰み': `${game.kif.length}手で${by}の玉が詰みました。`,
+      '指す手なし': `${by}に指せる手がなくなりました。`,
+      '投了': `${game.kif.length}手で${by}が投了しました。`,
+      '千日手': '同じ局面が4回現れたため千日手です。',
+      '連続王手の千日手': `連続王手の千日手のため、王手をかけ続けた${by}の負けです。`,
+      '持将棋(500手)': '500手に達したため持将棋です。',
+      '入玉宣言': `${r.winner === you ? 'あなた' : 'AI'}の入玉宣言が成立しました。`,
+      '入玉宣言(24〜30点・指し直し)': '入玉宣言の点数が24〜30点だったため指し直しです。',
+      '入玉宣言の条件不足': '入玉宣言の条件を満たしていなかったため、宣言した側の負けです。',
+    }[r.reason] || r.reason;
+    $('resultText').textContent = reasonText;
+    $('ovResult').hidden = false;
+    $('resultNew').focus();
+  }
+  $('resultClose').onclick = () => { $('ovResult').hidden = true; };
+  $('resultNew').onclick = () => { $('ovResult').hidden = true; openNew(); };
+
+  // ---- 確認ダイアログ（ブラウザの confirm は使えない環境があるため自前）
+  let confirmCb = null;
+  function confirmBox(title, text, yesLabel, cb) {
+    $('confirmTitle').textContent = title; $('confirmText').textContent = text; $('confirmYes').textContent = yesLabel;
+    confirmCb = cb; $('ovConfirm').hidden = false; $('confirmNo').focus();
+  }
+  $('confirmNo').onclick = () => { $('ovConfirm').hidden = true; confirmCb = null; };
+  $('confirmYes').onclick = () => { $('ovConfirm').hidden = true; const cb = confirmCb; confirmCb = null; if (cb) cb(); };
+
+  // ---- ボタン
+  $('btnUndo').onclick = () => {
+    if (thinking) cancelAI();
+    $('ovResult').hidden = true;
+    // 自分の手番に戻るまで戻す（AIの手と自分の手）
+    if (!st.moves.length) return;
+    game.undo(); st.moves.pop();
+    while (st.moves.length && game.side !== st.human) { game.undo(); st.moves.pop(); }
+    sel = null; targets.clear(); st.lastEval = null;
+    save(); render();
+    if (game.side !== st.human) askAI();
+  };
+  $('btnFlip').onclick = () => { st.flipped = !st.flipped; save(); render(); };
+  $('btnResign').onclick = () => {
+    if (game.result) return;
+    confirmBox('投了しますか？', 'この対局はAIの勝ちになります。', '投了する', () => {
+      if (thinking) cancelAI();
+      game.result = { winner: st.human ^ 1, reason: '投了' }; save(); render(); showResult();
+    });
+  };
+  $('btnDeclare').onclick = () => {
+    const d = game.pos.declarationStatus();
+    const msg = `敵陣の駒 ${d.pieces}枚（10枚以上が必要）、点数 ${d.points}点（31点以上で勝ち、24〜30点は指し直し）${d.inCheck ? '、王手がかかっています' : ''}。` +
+      (d.result === 'win' ? '宣言すると勝ちになります。' : d.result === 'draw' ? '宣言すると指し直し（引き分け）になります。' : '条件を満たしていないため、宣言すると負けになります。');
+    confirmBox('入玉宣言しますか？', msg, '宣言する', () => { game.declare(); save(); render(); showResult(); });
+  };
+  $('btnCopy').onclick = () => {
+    const head = `# KIF形式棋譜ファイル\n手合割：平手\n先手：${st.human ? 'AI(' + LEVELS[st.level].name + ')' : 'あなた'}\n後手：${st.human ? 'あなた' : 'AI(' + LEVELS[st.level].name + ')'}\n手数----指手---------消費時間--\n`;
+    const body = game.kif.map((k, i) => `${String(i + 1).padStart(4)} ${k.slice(1).replace('　', '　')}`).join('\n');
+    const tail = game.result ? `\nまで${game.kif.length}手で${game.result.winner === null ? game.result.reason : (game.result.winner ? '後手' : '先手') + 'の勝ち'}` : '';
+    const text = head + body + tail + '\n';
+    const fb = $('copyFallback');
+    const fallback = () => { fb.hidden = false; fb.value = text; fb.focus(); fb.select(); $('btnCopy').textContent = '下の欄から選択してコピー'; };
+    try {
+      navigator.clipboard.writeText(text).then(() => { $('btnCopy').textContent = 'コピーしました'; setTimeout(() => $('btnCopy').textContent = 'KIF形式でコピー', 1600); }, fallback);
+    } catch (e) { fallback(); }
+  };
+
+  // ---- 新規対局シート
+  let draft = { side: '0', level: 2 };
+  function syncSeg() {
+    $('segSide').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === draft.side)));
+    $('segLevel').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.v === draft.level)));
+    $('levelNote').textContent = LEVELS[draft.level].note;
+  }
+  $('segSide').onclick = e => { const b = e.target.closest('button'); if (b) { draft.side = b.dataset.v; syncSeg(); } };
+  $('segLevel').onclick = e => { const b = e.target.closest('button'); if (b) { draft.level = +b.dataset.v; syncSeg(); } };
+  function openNew() {
+    draft = { side: String(st.human), level: st.level };
+    syncSeg(); $('ovNew').hidden = false; $('newStart').focus();
+  }
+  $('btnNew').onclick = openNew;
+  $('newCancel').onclick = () => { $('ovNew').hidden = true; };
+  $('newStart').onclick = () => {
+    $('ovNew').hidden = true;
+    if (thinking) cancelAI();
+    const human = draft.side === 'r' ? (Math.random() < .5 ? 0 : 1) : +draft.side;
+    st = { startSfen: E.START_SFEN, moves: [], human, level: draft.level, flipped: human === 1, lastEval: null };
+    sel = null; targets.clear();
+    rebuild(); save(); render();
+    if (game.side !== st.human) askAI();
+  };
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    for (const id of ['ovNew', 'ovPromo', 'ovConfirm', 'ovResult']) $(id).hidden = true;
+    pendingPromo = null; confirmCb = null;
+  });
+
+  // ---- 起動
+  function start(data) {
+    const saved = (data && data.st) || load();
+    if (saved) st = Object.assign(st, saved);
+    makeWorker();
+    rebuild(); render();
+    if (game.result) showResult();
+    else if (game.side !== st.human) askAI();
+  }
+  if (window.claude && window.claude.hot) window.claude.hot.snapshot(() => ({ st }));
+  if (window.claude && window.claude.hot && window.claude.hot.ready) window.claude.hot.ready(start);
+  else start((window.claude && window.claude.hot && window.claude.hot.data) || {});
+
+  // オフライン起動用（https か localhost で開いた時だけ有効）
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+  }
+})();
+</script>
+</body>
+</html>
