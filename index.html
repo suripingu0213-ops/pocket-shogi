@@ -233,6 +233,15 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tag.dubious { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .tag.good { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .kifu li.click { cursor: pointer; border-radius: 4px; }
+.cand {
+  position: absolute; left: 50%; bottom: 1px; transform: translateX(-50%); z-index: 2; pointer-events: none;
+  font: 700 9.5px/1.3 var(--font-ui); font-variant-numeric: tabular-nums; white-space: nowrap;
+  padding: 0 3px; border-radius: 4px; background: var(--panel); color: var(--fg); box-shadow: 0 0 0 1px var(--line);
+}
+.cand.wait { color: var(--muted); }
+.cand.best { background: var(--accent); color: var(--accent-fg); box-shadow: none; }
+.cand.played { box-shadow: 0 0 0 2px var(--warn); }
+.cell.picked { background: var(--hl-select); }
 .kifu li.cur { background: var(--hl-select); }
 .kifu li .mk.bad { color: var(--danger); font-weight: 700; }
 .kifu li .mk.dubious { color: var(--warn); font-weight: 700; }
@@ -246,7 +255,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v6</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v7</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -452,7 +461,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   function selectFrom(spec) {
     sel = spec; targets = new Map();
-    for (const m of game.legalMoves()) {
+    for (const m of (review ? review.pos.legalMoves() : game.legalMoves())) {
       const f = m & 127;
       if (spec.drop ? f === 80 + spec.drop : f === spec.sq) {
         const to = (m >> 7) & 127;
@@ -463,7 +472,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 
   function onCell(sq) {
-    if (review) return;
+    if (review) { reviewTap(sq); return; }
     if (thinking || game.result || game.side !== st.human) return;
     if (sel && targets.has(sq)) {
       const ms = targets.get(sq);
@@ -479,7 +488,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
 
   function onHand(pt) {
-    if (review) return;
+    if (review) { reviewHand(pt); return; }
     if (thinking || game.result || game.side !== st.human) return;
     if (sel && sel.drop === pt) { sel = null; targets.clear(); }
     else selectFrom({ drop: pt });
@@ -538,6 +547,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       if (sel && sel.sq === sq) cls.push('sel');
       if (sq === checkSq) cls.push('check');
       if (targets.has(sq)) { cls.push('target'); if (p) cls.push('occupied'); }
+      if (review && rvPick === sq) cls.push('picked');
       c.el.className = cls.join(' ');
       let html = '';
       if (p) {
@@ -549,6 +559,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       // 星（3・6筋 × 3・6段の交点）
       const r = (v / 9) | 0, col = v % 9;
       if ((r === 2 || r === 5) && (col === 2 || col === 5)) html += '<span class="hoshi"></span>';
+      if (review && targets.has(sq)) html += candLabel(sq);
       c.el.innerHTML = html;
       const name = `${9 - (sq % 9)}${KAN[((sq / 9) | 0) + 1]}`;
       c.el.setAttribute('aria-label', p ? `${name} ${(p > 0 ? '先手' : '後手')}の${E.PIECE_KANJI[Math.abs(p)]}` : name);
@@ -593,12 +604,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   function renderHand(el, side) {
     const hand = (review ? review.pos : game.pos).hand[side], isMine = side === st.human;
+    const tappable = review ? side === review.pos.side : isMine;
     const label = (side ? '△' : '▲') + (isMine ? 'あなた' : 'AI');
     const items = HAND_ORDER.filter(pt => hand[pt]).map(pt =>
-      `<button class="hpiece${sel && sel.drop === pt && isMine ? ' sel' : ''}" data-pt="${pt}" aria-label="持ち駒 ${E.PIECE_KANJI[pt]} ${hand[pt]}枚"${isMine ? '' : ' tabindex="-1"'}>${komaHTML(pt, side ? 'gote' : 'sente', side !== (st.flipped ? 1 : 0) ? ' rev' : '')}${hand[pt] > 1 ? `<span class="cnt">${hand[pt]}</span>` : ''}</button>`);
+      `<button class="hpiece${sel && sel.drop === pt && tappable ? ' sel' : ''}" data-pt="${pt}" aria-label="持ち駒 ${E.PIECE_KANJI[pt]} ${hand[pt]}枚"${tappable ? '' : ' tabindex="-1"'}>${komaHTML(pt, side ? 'gote' : 'sente', side !== (st.flipped ? 1 : 0) ? ' rev' : '')}${hand[pt] > 1 ? `<span class="cnt">${hand[pt]}</span>` : ''}</button>`);
     el.innerHTML = `<span class="who">${label}</span><div class="pieces">${items.join('') || '<span class="empty">持ち駒なし</span>'}</div>`;
     el.className = 'hand ' + (isMine ? 'mine' : 'theirs');
-    if (isMine) el.querySelectorAll('.hpiece').forEach(b => b.onclick = () => onHand(+b.dataset.pt));
+    if (tappable) el.querySelectorAll('.hpiece').forEach(b => b.onclick = () => onHand(+b.dataset.pt));
   }
 
   // ---- 振り返り
@@ -623,6 +635,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
   function exitReview() {
     stopAnalysis();
+    clearCand();
     review = null;
     $('controls').hidden = false; $('review').hidden = true;
     render();
@@ -631,6 +644,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     if (!review) return;
     p = Math.max(0, Math.min(st.moves.length, p));
     review.ply = p; review.pos = posAt(p);
+    clearCand();
     render();
   }
   $('reviewExit').onclick = exitReview;
@@ -714,6 +728,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       const k = usiToKif(review.pos, cur.best, p ? (review.mvs[p - 1] >> 7) & 127 : -1);
       if (k) lines.push(`次の一手のAI推奨: ${k}`);
     }
+    lines.push(...candInfoLines());
     $('reviewInfo').innerHTML = lines.join('<br>');
   }
 
@@ -759,6 +774,113 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     anaId++;
     if (anaRunning && worker) { worker.terminate(); makeWorker(); }
     anaRunning = false;
+  }
+
+  // ---- 振り返り: 駒をタップして、動かせる先ごとのAI評価値を見る
+  let rvPick = -1;            // 評価値の詳細を見ている行き先
+  let cand = null;            // {id, evals: Map(usi → 先手から見た値), total}
+  let candId = 0, candWorker = null, candBusy = false;
+  const moverVal = (sc, mover) => (mover === 0 ? sc : -sc);
+  const youVal = sc => (st.human === 0 ? sc : -sc);
+
+  function clearCand() {
+    sel = null; targets.clear(); rvPick = -1; cand = null; candId++;
+    if (candBusy && candWorker) { candWorker.terminate(); candWorker = null; }
+    candBusy = false;
+  }
+  function reviewTap(sq) {
+    if (sel && targets.has(sq)) { rvPick = rvPick === sq ? -1 : sq; render(); return; }
+    const pos = review.pos, p = pos.board[sq];
+    const own = p !== 0 && (p > 0 ? 0 : 1) === pos.side;
+    if (own && !(sel && sel.sq === sq)) { clearCand(); selectFrom({ sq }); startCand(); }
+    else clearCand();
+    render();
+  }
+  function reviewHand(pt) {
+    if (sel && sel.drop === pt) clearCand();
+    else { clearCand(); selectFrom({ drop: pt }); startCand(); }
+    render();
+  }
+  function startCand() {
+    const usis = [];
+    for (const ms of targets.values()) for (const m of ms) usis.push(E.moveToUSI(m));
+    if (!usis.length) return;
+    const id = ++candId;
+    cand = { id, evals: new Map(), total: usis.length };
+    const timeMs = usis.length > 24 ? 60 : usis.length > 10 ? 100 : 160;
+    const onResult = d => {
+      if (d.id !== candId || !cand) return;
+      if (d.done) { candBusy = false; render(); return; }
+      cand.evals.set(d.usi, d.s);
+      render();
+    };
+    try {
+      if (!candWorker) { candWorker = new Worker('ai_worker.js'); candWorker.onmessage = e => onResult(e.data); }
+      candBusy = true;
+      candWorker.postMessage({ cand: true, id, sfen: st.startSfen, moves: st.moves.slice(0, review.ply), cands: usis, timeMs });
+      return;
+    } catch (e) { candWorker = null; }
+    // Worker が使えない環境: 画面側で1手ずつ
+    localSearcher = localSearcher || new E.Searcher(18);
+    let k = 0;
+    const step = () => {
+      if (id !== candId) return;
+      if (k >= usis.length) { onResult({ id, done: true }); return; }
+      const pos = posAt(review.ply), m = E.parseUSI(pos, usis[k]);
+      pos.make(m);
+      const r = localSearcher.search(pos, { timeMs });
+      const sc = r.declare ? E.MATE : r.score;
+      onResult({ id, usi: usis[k++], s: pos.side === 0 ? sc : -sc });
+      setTimeout(step, 10);
+    };
+    setTimeout(step, 10);
+  }
+  // 行き先 sq の手の中で、指す側にとって一番良い値
+  function bestAt(sq) {
+    const mover = review.pos.side;
+    let best = null;
+    for (const m of targets.get(sq) || []) {
+      const v = cand && cand.evals.get(E.moveToUSI(m));
+      if (v !== undefined && (best === null || moverVal(v, mover) > moverVal(best, mover))) best = v;
+    }
+    return best;
+  }
+  function shortEval(sc) {
+    const v = youVal(sc);
+    if (Math.abs(v) >= E.MATE_BOUND) return v > 0 ? '勝ち' : '負け';
+    return (v > 0 ? '+' : '') + v;
+  }
+  function candLabel(sq) {
+    const v = bestAt(sq);
+    if (v === null) return '<span class="cand wait">…</span>';
+    const mover = review.pos.side;
+    let overall = null;
+    for (const t of targets.keys()) { const b = bestAt(t); if (b !== null && (overall === null || moverVal(b, mover) > moverVal(overall, mover))) overall = b; }
+    const played = st.moves[review.ply];
+    const isPlayed = (targets.get(sq) || []).some(m => E.moveToUSI(m) === played);
+    const done = cand && cand.evals.size === cand.total;
+    const cls = 'cand' + (done && v === overall ? ' best' : '') + (isPlayed ? ' played' : '');
+    return `<span class="${cls}">${shortEval(v)}</span>`;
+  }
+  function candInfoLines() {
+    if (!review || !sel || !cand) return [];
+    const out = [];
+    const n = cand.evals.size, pos = review.pos, mover = pos.side;
+    const prevTo = review.ply ? (review.mvs[review.ply - 1] >> 7) & 127 : -1;
+    out.push(`<span style="color:var(--muted)">駒の行き先ごとのAI評価値（あなたから見た値・枠付きが実戦の手）${n < cand.total ? ` 計算中 ${n}/${cand.total}` : ''}</span>`);
+    let bestM = null, bestV = null;
+    for (const ms of targets.values()) for (const m of ms) {
+      const v = cand.evals.get(E.moveToUSI(m));
+      if (v !== undefined && (bestV === null || moverVal(v, mover) > moverVal(bestV, mover))) { bestV = v; bestM = m; }
+    }
+    if (bestM && n === cand.total) out.push(`この駒の最善: ${E.moveToKif(pos, bestM, prevTo).replace(/\(\d\d\)$/, '')} → ${fmtEval(bestV)}`);
+    if (rvPick >= 0 && targets.has(rvPick)) {
+      for (const m of targets.get(rvPick)) {
+        const v = cand.evals.get(E.moveToUSI(m));
+        out.push(`${E.moveToKif(pos, m, prevTo).replace(/\(\d\d\)$/, '')} → ${v === undefined ? '計算中' : fmtEval(v)}`);
+      }
+    } else out.push('<span style="color:var(--muted)">行き先をタップすると、その手の詳しい評価が出ます</span>');
+    return out;
   }
 
   // ---- 終局表示

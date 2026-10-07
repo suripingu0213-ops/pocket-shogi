@@ -33,6 +33,21 @@ self.onmessage = (e) => {
     self.postMessage({ ana: true, id: d.id, done: true });
     return;
   }
+  if (d.cand) {
+    // 振り返り: 候補手を1手ずつ指して局面を読み、先手から見た評価値を返す
+    const pos = replay(d.sfen, d.moves, d.moves.length);
+    for (const u of d.cands) {
+      const m = E.parseUSI(pos, u);
+      if (!m) continue;
+      pos.make(m);
+      const r = searcher.search(pos, { timeMs: d.timeMs });
+      const sc = r.declare ? E.MATE : r.score;
+      self.postMessage({ cand: true, id: d.id, usi: u, s: pos.side === 0 ? sc : -sc });
+      pos.unmake();
+    }
+    self.postMessage({ cand: true, id: d.id, done: true });
+    return;
+  }
   const pos = replay(d.sfen, d.moves, d.moves.length);
   const r = searcher.search(pos, d.opts);
   self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, depth: r.depth, nodes: r.nodes });
