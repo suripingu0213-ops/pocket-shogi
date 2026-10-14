@@ -1,7 +1,14 @@
-// 探索を別スレッドで動かす（画面を固まらせないため）
+﻿// 探索を別スレッドで動かす（画面を固まらせないため）
 importScripts('shogi_engine.js');
 const E = self.ShogiEngine;
 const searcher = new E.Searcher(19);
+
+// 学習済みの評価関数（強い将棋ソフトの棋譜から学習した「玉の位置×駒の位置」の点数表）。
+// 読み込めなければ手作りの評価関数で指す。
+const ready = fetch('eval.bin')
+  .then(r => (r.ok ? r.arrayBuffer() : null))
+  .then(buf => { if (buf) searcher.kp = E.loadKPWeights(buf); })
+  .catch(() => {});
 
 function replay(sfen, moves, upto) {
   const pos = new E.Position(sfen);
@@ -13,8 +20,9 @@ function replay(sfen, moves, upto) {
   return pos;
 }
 
-self.onmessage = (e) => {
-  const d = e.data;
+self.onmessage = (e) => { ready.then(() => handle(e.data)); };
+
+function handle(d) {
   if (d.ana) {
     // 振り返り: 指定された各局面を解析し、先手から見た評価値と推奨手を返す
     const plies = d.plies.slice().sort((a, b) => a - b);
@@ -47,4 +55,4 @@ self.onmessage = (e) => {
   const pos = replay(d.sfen, d.moves, d.moves.length);
   const r = searcher.search(pos, d.opts);
   self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, depth: r.depth, nodes: r.nodes });
-};
+}
