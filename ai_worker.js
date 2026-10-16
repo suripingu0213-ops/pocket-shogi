@@ -51,17 +51,8 @@ function handle(d) {
     self.postMessage({ ana: true, id: d.id, done: true });
     return;
   }
-  if (d.hint) {
-    // 対局中の候補手: 上位 k 手を読み、深さが1段進むごとに途中経過を返す（評価値は先手から見た値）
-    const pos = replay(d.sfen, d.moves, d.moves.length);
-    const toList = top => top.map(([m, sc]) => [E.moveToUSI(m), pos.side === 0 ? sc : -sc]);
-    const r = searcher.search(pos, {
-      timeMs: d.timeMs, multiPV: d.k,
-      onInfo: info => self.postMessage({ hint: true, id: d.id, depth: info.depth, list: toList(info.top) }),
-    });
-    self.postMessage({ hint: true, id: d.id, done: true, depth: r.depth, list: toList(r.top || []) });
-    return;
-  }
+  if (d.hint) { loadBook().then(() => hint(d)); return; }
+
   if (d.cand) {
     // 振り返り: 候補手だけを対局と同じ思考時間で全幅に読み、各手の評価値（先手から見た値）を返す
     const pos = replay(d.sfen, d.moves, d.moves.length);
@@ -74,6 +65,26 @@ function handle(d) {
     return;
   }
   loadBook().then(() => aiMove(d));
+}
+
+// 対局中の候補手: まず詰み（詰み探索・データベースの詰み証明）を確かめ、
+// 次に上位 k 手を読んで、深さが1段進むごとに途中経過を返す（評価値は先手から見た値）
+function hint(d) {
+  const pos = replay(d.sfen, d.moves, d.moves.length);
+  const mr = mateSolver.solve(pos, { nodeLimit: 100000 });
+  let mate = null;
+  if (mr.mate) mate = { usi: E.moveToUSI(mr.move), length: mr.length, src: 'search' };
+  else {
+    const b = book && book[posKey(pos)];
+    if (b && b[1] === 1) mate = { usi: b[0], length: 0, src: 'db' };
+  }
+  if (mate) self.postMessage({ hint: true, id: d.id, mate });
+  const toList = top => top.map(([m, sc]) => [E.moveToUSI(m), pos.side === 0 ? sc : -sc]);
+  const r = searcher.search(pos, {
+    timeMs: d.timeMs, multiPV: d.k,
+    onInfo: info => self.postMessage({ hint: true, id: d.id, depth: info.depth, list: toList(info.top) }),
+  });
+  self.postMessage({ hint: true, id: d.id, done: true, depth: r.depth, list: toList(r.top || []) });
 }
 
 // AIの1手（設計どおりの順番）

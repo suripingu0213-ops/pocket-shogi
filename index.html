@@ -223,6 +223,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hint-list .rk { color: var(--muted); text-align: right; }
 .hint-list .ev { white-space: nowrap; }
 .hint-list .played { font-size: 11px; color: var(--warn); font-weight: 700; margin-left: 6px; }
+.hint-list li.mate-row { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 700; }
+.hint-list li.mate-row .rk { color: var(--danger); }
 .hint-list .none { display: block; color: var(--muted); font-size: 12px; }
 
 /* ---- 振り返り */
@@ -270,7 +272,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v12</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v13</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -662,6 +664,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const onMsg = d => {
       if (d.id !== hintId || !hints[kind] || hints[kind].ply !== st.moves.length) return;
       const h = hints[kind];
+      if (d.mate) {
+        const m = E.parseUSI(game.pos, d.mate.usi);
+        h.mate = Object.assign({ kif: m ? E.moveToKif(game.pos, m, prevTo).replace(/\(\d\d\)$/, '') : d.mate.usi }, d.mate);
+      }
       if (d.list && d.list.length) {
         h.list = d.list.map(([usi, sc]) => {
           const m = E.parseUSI(game.pos, usi);
@@ -700,10 +706,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     }
     const whose = hintView === 'ai' ? (h.ply === n ? 'AIの番' : `${h.ply + 1}手目（AIの手）`) : (h.ply === n ? 'あなたの番' : `${h.ply + 1}手目（あなたの手）`);
     $('hintSt').textContent = `${whose}・${h.depth ? `${h.depth}手先まで` : ''}${live ? ' 考え中…' : ''}`;
-    if (!h.list.length) { $('hintList').innerHTML = '<li class="none">考えています…</li>'; return; }
     const played = h.ply < n ? st.moves[h.ply] : null;
-    $('hintList').innerHTML = h.list.map((x, i) =>
-      `<li><span class="rk">${i + 1}</span><span>${x.kif}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('');
+    const mateRow = h.mate ? `<li class="mate-row"><span class="rk">詰</span><span>詰みあり：${h.mate.kif}${h.mate.usi === played ? '<span class="played">指した手</span>' : ''}</span>` +
+      `<span class="ev">${h.mate.length ? `${h.mate.length}手詰め` : 'DBで詰み確定'}</span></li>` : '';
+    if (!h.list.length) { $('hintList').innerHTML = mateRow + '<li class="none">考えています…</li>'; return; }
+    $('hintList').innerHTML = mateRow + h.list.map((x, i) =>
+      `<li><span class="rk">${i + 1}</span><span>${x.kif}${h.mate && x.usi === h.mate.usi ? '<span class="tag bad">詰み</span>' : ''}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('');
   }
   $('hintSeg').onclick = e => { const b = e.target.closest('button'); if (b) { hintView = b.dataset.v; renderHints(); } };
 
