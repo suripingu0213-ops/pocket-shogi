@@ -41,6 +41,17 @@ function handle(d) {
     self.postMessage({ ana: true, id: d.id, done: true });
     return;
   }
+  if (d.hint) {
+    // 対局中の候補手: 上位 k 手を読み、深さが1段進むごとに途中経過を返す（評価値は先手から見た値）
+    const pos = replay(d.sfen, d.moves, d.moves.length);
+    const toList = top => top.map(([m, sc]) => [E.moveToUSI(m), pos.side === 0 ? sc : -sc]);
+    const r = searcher.search(pos, {
+      timeMs: d.timeMs, multiPV: d.k,
+      onInfo: info => self.postMessage({ hint: true, id: d.id, depth: info.depth, list: toList(info.top) }),
+    });
+    self.postMessage({ hint: true, id: d.id, done: true, depth: r.depth, list: toList(r.top || []) });
+    return;
+  }
   if (d.cand) {
     // 振り返り: 候補手だけを対局と同じ思考時間で全幅に読み、各手の評価値（先手から見た値）を返す
     const pos = replay(d.sfen, d.moves, d.moves.length);

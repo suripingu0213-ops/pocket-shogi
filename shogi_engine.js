@@ -623,6 +623,7 @@
     // opts: {timeMs, maxDepth, noise, onInfo, only, multi}
     //   only : 調べる手を限定（指し手の配列）
     //   multi: すべての手を全幅で読み、正確な評価値を result.scores に返す（振り返りの候補手比較用）
+    //   multiPV: 上位 k 手だけ正確な評価値を出す（対局中の候補手表示用）。result.top / onInfo の top に入る
     search(pos, opts) {
       opts = opts || {};
       this.pos = pos;
@@ -640,6 +641,8 @@
       let rootMoves = pos.legalMoves();
       if (opts.only) { const set = new Set(opts.only); rootMoves = rootMoves.filter(m => set.has(m)); }
       const multi = !!opts.multi, exact = new Map();
+      const kPV = opts.multiPV || 1;
+      let top = [];
       if (!rootMoves.length) return { move: 0, score: -MATE, depth: 0, nodes: 0, pv: [] };
       const offset = new Map(rootMoves.map(m => [m, noise ? Math.floor(Math.random() * noise) : 0]));
       let best = { move: rootMoves[0], score: 0, depth: 0, pv: [rootMoves[0]] };
@@ -652,7 +655,16 @@
           const m = order[k], off = offset.get(m);
           pos.make(m);
           let sc;
-          if (k === 0 || multi) sc = -this.negamax(depth - 1, -INF, multi ? INF : -(alpha - off), 1, true) + off;
+          if (kPV > 1 && !multi) {
+            // 上位 kPV 手に入るかどうかの境目（今の kPV 番目の値）で絞って読み、超えたら全幅で読み直す
+            const sorted = scored.length >= kPV ? scored.map(x => x[1]).sort((a, b) => b - a) : null;
+            const bound = sorted ? sorted[kPV - 1] : -INF;
+            if (bound === -INF) sc = -this.negamax(depth - 1, -INF, INF, 1, true);
+            else {
+              sc = -this.negamax(depth - 1, -bound - 1, -bound, 1, true);
+              if (sc > bound && !this.stop) sc = -this.negamax(depth - 1, -INF, INF, 1, true);
+            }
+          } else if (k === 0 || multi) sc = -this.negamax(depth - 1, -INF, multi ? INF : -(alpha - off), 1, true) + off;
           else {
             sc = -this.negamax(depth - 1, -(alpha - off) - 1, -(alpha - off), 1, true) + off;
             if (sc > alpha && !this.stop) sc = -this.negamax(depth - 1, -INF, -(alpha - off), 1, true) + off;
@@ -671,13 +683,15 @@
         }
         scored.sort((a, b) => b[1] - a[1]);
         order = scored.map(x => x[0]);
+        if (kPV > 1) top = scored.slice(0, kPV);
         best = { move: bestMove, score: bestScore, depth, pv: this.extractPV(bestMove) };
-        if (opts.onInfo) opts.onInfo({ depth, score: bestScore, nodes: this.nodes, pv: best.pv.map(moveToUSI) });
+        if (opts.onInfo) opts.onInfo({ depth, score: bestScore, nodes: this.nodes, pv: best.pv.map(moveToUSI), top });
         if (Math.abs(bestScore) >= MATE_BOUND && !multi) break; // 詰みを読み切った
         if (Date.now() > this.deadline) break;
       }
       best.nodes = this.nodes;
       if (multi) best.scores = Array.from(exact.entries()); // 最後に読めた深さでの各手の評価値
+      if (kPV > 1) best.top = top;
       return best;
     }
 
