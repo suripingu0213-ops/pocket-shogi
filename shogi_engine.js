@@ -702,6 +702,7 @@
         if (Date.now() > this.deadline) break;
       }
       best.nodes = this.nodes;
+      best.order = order.slice(); // 最後に読み終えた深さでの、良い順に並べた候補手
       if (multi) best.scores = Array.from(exact.entries()); // 最後に読めた深さでの各手の評価値
       if (kPV > 1) best.top = top;
       return best;
@@ -1022,10 +1023,36 @@
     }
   }
 
+  // ---------------------------------------------------------------- 頓死よけ
+  // 候補手を良い順に調べ、「指した後に相手に詰みがある手」を避ける。
+  // 全部の手で詰まされる場合は、詰みまでが一番長い手（一番粘れる手）を選ぶ。
+  // 戻り値: {move, unsafe: [{move, length}], allMate}
+  function pickSafe(pos, candidates, solver, opts) {
+    opts = opts || {};
+    const nodeLimit = opts.nodeLimit || 30000, maxCheck = opts.maxCheck || 8;
+    const unsafe = [];
+    const mateAfter = (m, limit) => {
+      pos.make(m);
+      const r = pos.hasLegalMove() ? solver.solve(pos, { nodeLimit: limit }) : { mate: false };
+      pos.unmake();
+      return r.mate ? (r.length || 1) : 0;
+    };
+    // 良い順に上位 maxCheck 手を調べる。全部ダメなら残りの手も軽めに調べる（最大40手）
+    for (let k = 0; k < candidates.length && k < maxCheck + 40; k++) {
+      const m = candidates[k];
+      const len = mateAfter(m, k < maxCheck ? nodeLimit : Math.max(2000, nodeLimit >> 2));
+      if (!len) return { move: m, unsafe, allMate: false };
+      unsafe.push({ move: m, length: len });
+    }
+    let best = unsafe[0];
+    for (const u of unsafe) if (u.length > best.length) best = u;
+    return { move: best ? best.move : candidates[0], unsafe, allMate: true };
+  }
+
   const api = {
     FU, KY, KE, GI, KI, KA, HI, OU, TO, NY, NK, NG, UM, RY, BLACK, WHITE,
     PROMOTE, UNPROMOTE, PIECE_KANJI, PIECE_KANJI1, START_SFEN, MATE, MATE_BOUND,
-    Position, Game, Searcher, MateSolver,
+    Position, Game, Searcher, MateSolver, pickSafe,
     loadKPWeights,
     mkMove, mFrom, mTo, mPromo, isDrop, moveToUSI, parseUSI, moveToKif,
     sqFile, sqRank, sqOf, relRow,

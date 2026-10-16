@@ -94,33 +94,47 @@ function hint(d) {
     timeMs: d.timeMs, multiPV: d.k,
     onInfo: info => self.postMessage({ hint: true, id: d.id, depth: info.depth, list: toList(info.top) }),
   });
-  self.postMessage({ hint: true, id: d.id, done: true, depth: r.depth, list: toList(r.top || []) });
+  self.postMessage({ hint: true, id: d.id, depth: r.depth, list: toList(r.top || []) });
+  const unsafe = [];
+  for (const [m] of r.top || []) {
+    const sp = E.pickSafe(pos, [m], mateSolver, { nodeLimit: 15000, maxCheck: 1 });
+    if (sp.allMate) unsafe.push([E.moveToUSI(m), sp.unsafe[0].length]);
+  }
+  self.postMessage({ hint: true, id: d.id, done: true, depth: r.depth, list: toList(r.top || []), unsafe });
 }
 
 // AIの1手（設計どおりの順番）
-// 1. 詰み探索で勝ちが証明できる手 2. データベースで詰みが証明済みの手 3. データベースで勝率100%の手
-// 4. AIの探索（データベースで負けしかない手は、他に手があれば候補から外す）
+// 1. 詰み探索で勝ちが証明できる手 2. データベースで詰みが証明済みの手
+// 3. データベースで勝率100%の手（ただし指した後に相手に詰みがあれば指さない）
+// 4. AIの探索。良い順に「指した後に相手に詰みがあるか」を確かめ、詰みのない最初の手を指す（頓死よけ）
+//    全部の手で詰まされるなら、詰みまでが一番長い手を指す
 function aiMove(d) {
   const pos = replay(d.sfen, d.moves, d.moves.length);
   const post = (move, score, how, extra) => self.postMessage(Object.assign({ id: d.id, move, declare: false, score, how }, extra || {}));
   const mr = mateSolver.solve(pos, { nodeLimit: 30000 });
   if (mr.mate) { post(E.moveToUSI(mr.move), E.MATE - (mr.length || 1), 'mate', { mateLen: mr.length }); return; }
   const b = book && book[posKey(pos)];
-  if (b && b[1]) {
+  if (b && b[1] === 1) {
     const m = E.parseUSI(pos, b[0]);
-    if (m) {
+    if (m) { post(b[0], E.MATE - 1, 'proven'); return; }
+  }
+  if (b && b[1] === 2) {
+    const m = E.parseUSI(pos, b[0]);
+    if (m && !E.pickSafe(pos, [m], mateSolver, { nodeLimit: 30000, maxCheck: 1 }).allMate) {
       // 評価値の表示用に、その手だけを短く読む
       const r = searcher.search(pos, { timeMs: Math.min(1500, d.opts.timeMs || 1500), only: [m] });
-      post(b[0], b[1] === 1 ? E.MATE - 1 : r.score, b[1] === 1 ? 'proven' : 'db100');
+      post(b[0], r.score, 'db100');
       return;
     }
   }
-  let only;
-  if (b && b[2]) {
-    const bad = new Set(b[2].split(' ').map(x => x.split(':')[0]));
-    only = pos.legalMoves().filter(m => !bad.has(E.moveToUSI(m)));
-    if (!only.length) only = undefined;
+  const r = searcher.search(pos, d.opts);
+  if (r.declare || !r.move) {
+    self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, how: 'search' });
+    return;
   }
-  const r = searcher.search(pos, Object.assign({}, d.opts, { only }));
-  self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, depth: r.depth, nodes: r.nodes, how: only ? 'search-db' : 'search' });
+  const cands = [r.move].concat((r.order || []).filter(m => m !== r.move));
+  const sp = E.pickSafe(pos, cands, mateSolver, { nodeLimit: 30000, maxCheck: 8 });
+  const how = !sp.unsafe.length ? 'search' : sp.allMate ? 'allmate' : 'avoid';
+  self.postMessage({ id: d.id, move: E.moveToUSI(sp.move), declare: false, score: sp.allMate ? -E.MATE + 2 : r.score, depth: r.depth, nodes: r.nodes, how,
+    avoided: sp.unsafe.map(u => [E.moveToUSI(u.move), u.length]) });
 }

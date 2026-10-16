@@ -276,7 +276,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v17</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v18</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -617,7 +617,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     if (st.moves.length > 2) furigomaNote = '';
     $('evalv').textContent = furigomaNote || (ev === null || ev === undefined ? '' :
       (Math.abs(ev) >= E.MATE_BOUND ? `評価 ${ev > 0 ? nameA() : nameB()}の勝ち筋` : `評価${isSpec() ? '(先手)' : ''} ${ev > 0 ? '+' : ''}${ev}`) +
-      ({ mate: '・詰みを読み切り', proven: '・DBで詰み確定', db100: '・DB勝率100%' }[st.lastHow] || ''));
+      ({ mate: '・詰みを読み切り', proven: '・DBで詰み確定', db100: '・DB勝率100%', avoid: '・相手の詰みを回避', allmate: '・詰まされる局面' }[st.lastHow] || ''));
 
     // ボタン
     $('btnUndo').disabled = isSpec() || !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
@@ -685,6 +685,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         const m = E.parseUSI(game.pos, d.mate.usi);
         h.mate = Object.assign({ kif: m ? E.moveToKif(game.pos, m, prevTo).replace(/\(\d\d\)$/, '') : d.mate.usi }, d.mate);
       }
+      if (d.unsafe) h.unsafe = new Map(d.unsafe);
       if (d.db) {
         const m = d.db.pick && E.parseUSI(game.pos, d.db.pick);
         h.db = { pick: d.db.pick, wins: d.db.wins, bad: new Map(d.db.bad),
@@ -742,10 +743,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const dbNote = db && db.bad.size && !db.pick ? `<li class="none">DBで0勝100敗以上の手は、評価値が高くてもAIは選びません</li>` : '';
     const tags = x => (h.mate && x.usi === h.mate.usi ? '<span class="tag bad">詰み</span>' : '') +
       (db && x.usi === db.pick ? '<span class="tag good">DB勝率100%</span>' : '') +
-      (db && db.bad.has(x.usi) ? `<span class="tag dubious">DBで0勝${db.bad.get(x.usi)}敗</span>` : '');
+      (db && db.bad.has(x.usi) ? `<span class="tag dubious">DBで0勝${db.bad.get(x.usi)}敗</span>` : '') +
+      (h.unsafe && h.unsafe.has(x.usi) ? `<span class="tag bad">相手に${h.unsafe.get(x.usi)}手詰めあり</span>` : '');
     if (!h.list.length) { $('hintList').innerHTML = mateRow + dbRow + '<li class="none">考えています…</li>'; return; }
     $('hintList').innerHTML = mateRow + dbRow + h.list.map((x, i) =>
-      `<li${db && db.bad.has(x.usi) ? ' class="excluded"' : ''}><span class="rk">${i + 1}</span><span>${x.kif}${tags(x)}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('') + dbNote;
+      `<li${(db && db.bad.has(x.usi)) || (h.unsafe && h.unsafe.has(x.usi)) ? ' class="excluded"' : ''}><span class="rk">${i + 1}</span><span>${x.kif}${tags(x)}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('') + dbNote;
   }
   $('hintSeg').onclick = e => { const b = e.target.closest('button'); if (b) { hintView = b.dataset.v; renderHints(); } };
 
