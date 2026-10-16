@@ -225,6 +225,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hint-list .played { font-size: 11px; color: var(--warn); font-weight: 700; margin-left: 6px; }
 .hint-list li.mate-row { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); font-weight: 700; }
 .hint-list li.mate-row .rk { color: var(--danger); }
+.hint-list li.db-row { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 700; }
+.hint-list li.db-row .rk { color: var(--accent); font-size: 11px; }
+.hint-list li.excluded > span:nth-child(2) { opacity: .75; }
+.hint-list li:first-child.excluded { background: transparent; font-weight: 400; }
 .hint-list .none { display: block; color: var(--muted); font-size: 12px; }
 
 /* ---- 振り返り */
@@ -272,7 +276,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v15</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v16</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -681,6 +685,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         const m = E.parseUSI(game.pos, d.mate.usi);
         h.mate = Object.assign({ kif: m ? E.moveToKif(game.pos, m, prevTo).replace(/\(\d\d\)$/, '') : d.mate.usi }, d.mate);
       }
+      if (d.db) {
+        const m = d.db.pick && E.parseUSI(game.pos, d.db.pick);
+        h.db = { pick: d.db.pick, wins: d.db.wins, bad: new Map(d.db.bad),
+          pickKif: m ? E.moveToKif(game.pos, m, prevTo).replace(/\(\d\d\)$/, '') : d.db.pick };
+      }
       if (d.list && d.list.length) {
         h.list = d.list.map(([usi, sc]) => {
           const m = E.parseUSI(game.pos, usi);
@@ -726,9 +735,17 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const played = h.ply < n ? st.moves[h.ply] : null;
     const mateRow = h.mate ? `<li class="mate-row"><span class="rk">詰</span><span>詰みあり：${h.mate.kif}${h.mate.usi === played ? '<span class="played">指した手</span>' : ''}</span>` +
       `<span class="ev">${h.mate.length ? `${h.mate.length}手詰め` : 'DBで詰み確定'}</span></li>` : '';
-    if (!h.list.length) { $('hintList').innerHTML = mateRow + '<li class="none">考えています…</li>'; return; }
-    $('hintList').innerHTML = mateRow + h.list.map((x, i) =>
-      `<li><span class="rk">${i + 1}</span><span>${x.kif}${h.mate && x.usi === h.mate.usi ? '<span class="tag bad">詰み</span>' : ''}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('');
+    // データベースで決まる手（AIは評価値よりこちらを優先する）
+    const db = !h.mate && h.db;
+    const dbRow = db && db.pick ? `<li class="db-row"><span class="rk">DB</span><span>AIはこの手を選びます：${db.pickKif}${db.pick === played ? '<span class="played">指した手</span>' : ''}</span>` +
+      `<span class="ev">${db.wins}勝0敗</span></li>` : '';
+    const dbNote = db && db.bad.size && !db.pick ? `<li class="none">「DBで全敗」の手は、評価値が高くてもAIは選びません</li>` : '';
+    const tags = x => (h.mate && x.usi === h.mate.usi ? '<span class="tag bad">詰み</span>' : '') +
+      (db && x.usi === db.pick ? '<span class="tag good">DB勝率100%</span>' : '') +
+      (db && db.bad.has(x.usi) ? `<span class="tag dubious">DBで全敗（${db.bad.get(x.usi)}敗）</span>` : '');
+    if (!h.list.length) { $('hintList').innerHTML = mateRow + dbRow + '<li class="none">考えています…</li>'; return; }
+    $('hintList').innerHTML = mateRow + dbRow + h.list.map((x, i) =>
+      `<li${db && db.bad.has(x.usi) ? ' class="excluded"' : ''}><span class="rk">${i + 1}</span><span>${x.kif}${tags(x)}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('') + dbNote;
   }
   $('hintSeg').onclick = e => { const b = e.target.closest('button'); if (b) { hintView = b.dataset.v; renderHints(); } };
 

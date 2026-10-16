@@ -79,6 +79,16 @@ function hint(d) {
     if (b && b[1] === 1) mate = { usi: b[0], length: 0, src: 'db' };
   }
   if (mate) self.postMessage({ hint: true, id: d.id, mate });
+  else {
+    // データベースで決まる手（AIはこれを評価値より優先する）を候補手の欄に見せる
+    const b = book && book[posKey(pos)];
+    if (b && (b[1] === 2 || b[2])) {
+      self.postMessage({ hint: true, id: d.id, db: {
+        pick: b[1] === 2 ? b[0] : null, wins: b[3] || 0,
+        bad: b[2] ? b[2].split(' ').map(x => { const [u, l] = x.split(':'); return [u, +(l || 1)]; }) : [],
+      } });
+    }
+  }
   const toList = top => top.map(([m, sc]) => [E.moveToUSI(m), pos.side === 0 ? sc : -sc]);
   const r = searcher.search(pos, {
     timeMs: d.timeMs, multiPV: d.k,
@@ -107,7 +117,7 @@ function aiMove(d) {
   }
   let only;
   if (b && b[2]) {
-    const bad = new Set(b[2].split(' '));
+    const bad = new Set(b[2].split(' ').map(x => x.split(':')[0]));
     only = pos.legalMoves().filter(m => !bad.has(E.moveToUSI(m)));
     if (!only.length) only = undefined;
   }
