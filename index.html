@@ -276,7 +276,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v16</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v17</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -739,10 +739,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const db = !h.mate && h.db;
     const dbRow = db && db.pick ? `<li class="db-row"><span class="rk">DB</span><span>AIはこの手を選びます：${db.pickKif}${db.pick === played ? '<span class="played">指した手</span>' : ''}</span>` +
       `<span class="ev">${db.wins}勝0敗</span></li>` : '';
-    const dbNote = db && db.bad.size && !db.pick ? `<li class="none">「DBで全敗」の手は、評価値が高くてもAIは選びません</li>` : '';
+    const dbNote = db && db.bad.size && !db.pick ? `<li class="none">DBで0勝100敗以上の手は、評価値が高くてもAIは選びません</li>` : '';
     const tags = x => (h.mate && x.usi === h.mate.usi ? '<span class="tag bad">詰み</span>' : '') +
       (db && x.usi === db.pick ? '<span class="tag good">DB勝率100%</span>' : '') +
-      (db && db.bad.has(x.usi) ? `<span class="tag dubious">DBで全敗（${db.bad.get(x.usi)}敗）</span>` : '');
+      (db && db.bad.has(x.usi) ? `<span class="tag dubious">DBで0勝${db.bad.get(x.usi)}敗</span>` : '');
     if (!h.list.length) { $('hintList').innerHTML = mateRow + dbRow + '<li class="none">考えています…</li>'; return; }
     $('hintList').innerHTML = mateRow + dbRow + h.list.map((x, i) =>
       `<li${db && db.bad.has(x.usi) ? ' class="excluded"' : ''}><span class="rk">${i + 1}</span><span>${x.kif}${tags(x)}${x.usi === played ? '<span class="played">指した手</span>' : ''}</span><span class="ev">${hintEval(x.s)}</span></li>`).join('') + dbNote;
