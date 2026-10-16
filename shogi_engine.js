@@ -873,10 +873,145 @@
     }
   }
 
+  // ---------------------------------------------------------------- 詰み探索（df-pn）
+  // 王手をかける側（攻め方）は王手だけ、受け方は王手を逃れる手だけを読む。
+  // 「何をされても詰む」ことが証明できた時だけ mate:true を返す（統計ではなく確定した勝ち）。
+  const PN_INF = 100000000;
+  const sat = x => (x >= PN_INF ? PN_INF : x);
+
+  class MateSolver {
+    constructor(ttBits) {
+      const size = 1 << (ttBits || 18);
+      this.mask = size - 1;
+      this.tKey = new Int32Array(size); this.tPn = new Uint32Array(size); this.tDn = new Uint32Array(size);
+      this.tUsed = new Uint8Array(size);
+      this.tDist = new Uint16Array(size); // 詰みと証明できた局面の、詰みまでの手数
+      this.buf = [];
+    }
+
+    _get(h1, h2) {
+      const i = h1 & this.mask;
+      if (this.tUsed[i] && this.tKey[i] === h2) return i;
+      return -1;
+    }
+    _store(h1, h2, pn, dn, dist) {
+      const i = h1 & this.mask;
+      this.tUsed[i] = 1; this.tKey[i] = h2; this.tPn[i] = pn; this.tDn[i] = dn; this.tDist[i] = dist || 0;
+    }
+
+    // opts: {nodeLimit, maxPly}
+    // 戻り値: {mate:true, move} / {mate:false, disproved:bool}
+    solve(pos, opts) {
+      opts = opts || {};
+      this.pos = pos; this.nodes = 0; this.stop = false;
+      this.limit = opts.nodeLimit || 200000; this.maxPly = opts.maxPly || 63;
+      this.attacker = pos.side;
+      // 実際の対局でこれまでに現れた局面も「戻ってはいけない局面」として扱う（王手の繰り返し＝連続王手の千日手を防ぐ）
+      this.path = new Set();
+      for (let i = 0; i < pos.ply; i++) if (pos.stMove[i] !== 0) this.path.add(pos.stK1[i] + ':' + pos.stK2[i]);
+      this.tUsed.fill(0);
+      if (pos.inCheck()) return { mate: false, disproved: false }; // 王手されている側からは攻められない
+      this._mid(PN_INF, PN_INF, 0);
+      const i = this._get(pos.h1, pos.h2);
+      const pn = i >= 0 ? this.tPn[i] : 1, dn = i >= 0 ? this.tDn[i] : 1;
+      if (pn !== 0) return { mate: false, disproved: dn === 0, nodes: this.nodes };
+      // 詰ませる最初の手: 子の局面が「詰み」と証明されている王手のうち、一番短く詰むもの
+      // （どれでも良いわけではない。遠回りの手を選ぶと王手の繰り返し＝連続王手の千日手になりうる）
+      let bestM = 0, bestD = 1e9;
+      for (const m of this._children(true)) {
+        pos.make(m);
+        const j = this._get(pos.h1, pos.h2);
+        if (j >= 0 && this.tPn[j] === 0 && this.tDist[j] < bestD) { bestD = this.tDist[j]; bestM = m; }
+        pos.unmake();
+      }
+      if (bestM) return { mate: true, move: bestM, length: bestD + 1, nodes: this.nodes };
+      return { mate: false, disproved: false, nodes: this.nodes };
+    }
+
+    // 攻め方の局面なら王手になる合法手、受け方の局面なら全ての合法手（王手を逃れる手）
+    _children(orNode) {
+      const pos = this.pos, d = this.path.size;
+      const buf = this.buf[d] || (this.buf[d] = new Int32Array(MAXMOVES));
+      const n = pos.generate(buf, false), out = [];
+      for (let k = 0; k < n; k++) {
+        const m = buf[k];
+        pos.make(m);
+        if (pos.isLegalAfterMake() && (!orNode || pos.stCheck[pos.ply - 1])) out.push(m);
+        pos.unmake();
+      }
+      return out;
+    }
+
+    _mid(thpn, thdn, ply) {
+      const pos = this.pos;
+      if (++this.nodes > this.limit) { this.stop = true; return; }
+      const orNode = pos.side === this.attacker;
+      const key = pos.h1 + ':' + pos.h2;
+      if (ply >= this.maxPly) { this._store(pos.h1, pos.h2, PN_INF, 0); return; }
+      const moves = this._children(orNode);
+      if (!moves.length) {
+        // 王手が無い（攻め方の負け）/ 逃れる手が無い（詰み）
+        if (orNode) this._store(pos.h1, pos.h2, PN_INF, 0); else this._store(pos.h1, pos.h2, 0, PN_INF, 0);
+        return;
+      }
+      // 子の局面のハッシュを先に集めておく（毎回指し直さなくて済むように）
+      const n = moves.length, c1 = new Int32Array(n), c2 = new Int32Array(n), rep = new Uint8Array(n);
+      for (let k = 0; k < n; k++) {
+        pos.make(moves[k]);
+        c1[k] = pos.h1; c2[k] = pos.h2;
+        rep[k] = this.path.has(pos.h1 + ':' + pos.h2) ? 1 : 0; // 同じ局面に戻る手（千日手）は詰みにならない
+        pos.unmake();
+      }
+      this.path.add(key);
+      let pn = 0, dn = 0;
+      for (;;) {
+        // 子の値を集める
+        let best = -1, b1 = PN_INF + 1, b2 = PN_INF + 1, sum = 0, bestOther = 0;
+        for (let k = 0; k < n; k++) {
+          let cpn, cdn;
+          if (rep[k]) { cpn = PN_INF; cdn = 0; if (!orNode) { cpn = PN_INF; cdn = 0; } }
+          else {
+            const j = this._get(c1[k], c2[k]);
+            if (j >= 0) { cpn = this.tPn[j]; cdn = this.tDn[j]; } else { cpn = 1; cdn = 1; }
+          }
+          // 攻め方の局面: pn = 子の pn の最小、dn = 子の dn の合計
+          // 受け方の局面: pn = 子の pn の合計、dn = 子の dn の最小
+          const v = orNode ? cpn : cdn, o = orNode ? cdn : cpn;
+          sum = sat(sum + o);
+          if (v < b1) { b2 = b1; b1 = v; best = k; bestOther = o; } else if (v < b2) b2 = v;
+        }
+        if (orNode) { pn = b1; dn = sum; } else { pn = sum; dn = b1; }
+        if (pn >= thpn || dn >= thdn || this.stop) break;
+        // 一番有望な子を、しきい値を与えて読み進める
+        let cth1, cth2;
+        if (orNode) { cth1 = Math.min(thpn, b2 + 1); cth2 = sat(thdn - dn + bestOther); }
+        else { cth2 = Math.min(thdn, b2 + 1); cth1 = sat(thpn - pn + bestOther); }
+        pos.make(moves[best]);
+        this._mid(cth1, cth2, ply + 1);
+        pos.unmake();
+        if (this.stop) break;
+      }
+      this.path.delete(key);
+      if (this.stop) return;
+      let dist = 0;
+      if (pn === 0) {
+        // 詰みまでの手数: 攻め方は一番短い王手、受け方は一番長く逃げる手
+        dist = orNode ? 1e9 : 0;
+        for (let k = 0; k < n; k++) {
+          const j = rep[k] ? -1 : this._get(c1[k], c2[k]);
+          if (j < 0 || this.tPn[j] !== 0) continue;
+          dist = orNode ? Math.min(dist, this.tDist[j] + 1) : Math.max(dist, this.tDist[j] + 1);
+        }
+        if (dist >= 65535) dist = 65534;
+      }
+      this._store(pos.h1, pos.h2, pn, dn, dist);
+    }
+  }
+
   const api = {
     FU, KY, KE, GI, KI, KA, HI, OU, TO, NY, NK, NG, UM, RY, BLACK, WHITE,
     PROMOTE, UNPROMOTE, PIECE_KANJI, PIECE_KANJI1, START_SFEN, MATE, MATE_BOUND,
-    Position, Game, Searcher,
+    Position, Game, Searcher, MateSolver,
     loadKPWeights,
     mkMove, mFrom, mTo, mPromo, isDrop, moveToUSI, parseUSI, moveToKif,
     sqFile, sqRank, sqOf, relRow,

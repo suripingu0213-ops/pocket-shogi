@@ -10,6 +10,16 @@ const ready = fetch('eval.bin')
   .then(buf => { if (buf) searcher.kp = E.loadKPWeights(buf); })
   .catch(() => {});
 
+// 対局データベース（PCの自己対局・floodgate の棋譜から作った book.json）。AIが指す時だけ読み込む
+let book = null, bookTried = false;
+function loadBook() {
+  if (bookTried) return Promise.resolve();
+  bookTried = true;
+  return fetch('book.json').then(r => (r.ok ? r.json() : null)).then(j => { if (j) book = j.d; }).catch(() => {});
+}
+const mateSolver = new E.MateSolver(18);
+const posKey = pos => (pos.h1 >>> 0).toString(16).padStart(8, '0') + (pos.h2 >>> 0).toString(16).padStart(8, '0');
+
 function replay(sfen, moves, upto) {
   const pos = new E.Position(sfen);
   for (let i = 0; i < upto; i++) {
@@ -63,7 +73,33 @@ function handle(d) {
     self.postMessage({ cand: true, id: d.id, done: true });
     return;
   }
+  loadBook().then(() => aiMove(d));
+}
+
+// AIの1手（設計どおりの順番）
+// 1. 詰み探索で勝ちが証明できる手 2. データベースで詰みが証明済みの手 3. データベースで勝率100%の手
+// 4. AIの探索（データベースで負けしかない手は、他に手があれば候補から外す）
+function aiMove(d) {
   const pos = replay(d.sfen, d.moves, d.moves.length);
-  const r = searcher.search(pos, d.opts);
-  self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, depth: r.depth, nodes: r.nodes });
+  const post = (move, score, how, extra) => self.postMessage(Object.assign({ id: d.id, move, declare: false, score, how }, extra || {}));
+  const mr = mateSolver.solve(pos, { nodeLimit: 30000 });
+  if (mr.mate) { post(E.moveToUSI(mr.move), E.MATE - (mr.length || 1), 'mate', { mateLen: mr.length }); return; }
+  const b = book && book[posKey(pos)];
+  if (b && b[1]) {
+    const m = E.parseUSI(pos, b[0]);
+    if (m) {
+      // 評価値の表示用に、その手だけを短く読む
+      const r = searcher.search(pos, { timeMs: Math.min(1500, d.opts.timeMs || 1500), only: [m] });
+      post(b[0], b[1] === 1 ? E.MATE - 1 : r.score, b[1] === 1 ? 'proven' : 'db100');
+      return;
+    }
+  }
+  let only;
+  if (b && b[2]) {
+    const bad = new Set(b[2].split(' '));
+    only = pos.legalMoves().filter(m => !bad.has(E.moveToUSI(m)));
+    if (!only.length) only = undefined;
+  }
+  const r = searcher.search(pos, Object.assign({}, d.opts, { only }));
+  self.postMessage({ id: d.id, move: r.move ? E.moveToUSI(r.move) : null, declare: !!r.declare, score: r.score, depth: r.depth, nodes: r.nodes, how: only ? 'search-db' : 'search' });
 }

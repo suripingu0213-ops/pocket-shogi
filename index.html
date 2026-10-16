@@ -270,7 +270,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v11</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v12</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -455,6 +455,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       thinking = false;
       if (typeof d.score === 'number') {
         st.lastEval = -d.score; // あなたから見た値
+        st.lastHow = d.how || '';
         st.evals[st.moves.length] = { s: game.side === 0 ? d.score : -d.score, best: d.move, a: 1 }; // 先手から見た値・最強設定の読み
       }
       if (d.declare) { game.declare(); st.result = game.result; save(); render(); showResult(); return; }
@@ -596,7 +597,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const ev = st.lastEval;
     if (st.moves.length > 2) furigomaNote = '';
     $('evalv').textContent = furigomaNote || (ev === null || ev === undefined ? '' :
-      Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`);
+      (Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`) +
+      ({ mate: '・詰みを読み切り', proven: '・DBで詰み確定', db100: '・DB勝率100%' }[st.lastHow] || ''));
 
     // ボタン
     $('btnUndo').disabled = !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
