@@ -606,6 +606,17 @@
   const INF = 32000, MATE = 30000, MATE_BOUND = MATE - 1000, PERPETUAL = 20000;
   const TT_EXACT = 1, TT_LOWER = 2, TT_UPPER = 3;
 
+  // 歩・角・飛を、成れるのに成らない手（実戦でほぼ意味がないので探索では読まない。人間が指すのは自由）
+  function uselessNonPromo(pos, m) {
+    if ((m >> 14) & 1) return false;
+    const from = m & 127;
+    if (from > 80) return false;
+    const pt = Math.abs(pos.board[from]);
+    if (pt !== FU && pt !== KA && pt !== HI) return false;
+    const s = pos.side, to = (m >> 7) & 127;
+    return relRow(s, to) <= 2 || relRow(s, from) <= 2;
+  }
+
   class Searcher {
     constructor(ttBits) {
       const size = 1 << (ttBits || 20);
@@ -640,6 +651,7 @@
 
       let rootMoves = pos.legalMoves();
       if (opts.only) { const set = new Set(opts.only); rootMoves = rootMoves.filter(m => set.has(m)); }
+      else if (!opts.multi) { const f = rootMoves.filter(m => !uselessNonPromo(pos, m)); if (f.length) rootMoves = f; }
       const multi = !!opts.multi, exact = new Map();
       const kPV = opts.multiPV || 1;
       let top = [];
@@ -780,6 +792,7 @@
         const m = buf[bi]; buf[bi] = buf[i]; buf[i] = m;
         const ms = sc[bi]; sc[bi] = sc[i]; sc[i] = ms;
 
+        if (uselessNonPromo(pos, m)) continue;
         const quiet = !pos.board[(m >> 7) & 127] && !((m >> 14) & 1);
         pos.make(m);
         if (!pos.isLegalAfterMake()) { pos.unmake(); continue; }
@@ -860,6 +873,7 @@
         for (let j = i + 1; j < n; j++) if (sc[j] > sc[bi]) bi = j;
         const m = buf[bi]; buf[bi] = buf[i]; buf[i] = m;
         const ms = sc[bi]; sc[bi] = sc[i]; sc[i] = ms;
+        if (uselessNonPromo(pos, m)) continue;
         pos.make(m);
         if (!pos.isLegalAfterMake()) { pos.unmake(); continue; }
         legal++;

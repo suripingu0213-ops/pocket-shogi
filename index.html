@@ -272,7 +272,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div class="app" id="app">
   <header class="topbar">
-    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v13</span></div>
+    <div class="brand">ポケット将棋 <span class="ver" id="appVer">v14</span></div>
     <div class="status">
       <span class="evalv" id="evalv"></span>
       <span class="turn" id="turn"><span class="dot"></span><span id="turnText">あなたの番</span></span>
@@ -340,10 +340,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <div class="field">
       <span>あなたの手番</span>
       <div class="seg" id="segSide">
-        <button data-v="0">先手 ▲</button><button data-v="1">後手 △</button><button data-v="r">ふり駒</button>
+        <button data-v="0">先手 ▲</button><button data-v="1">後手 △</button><button data-v="r">ふり駒</button><button data-v="spec">AI同士</button>
       </div>
     </div>
-    <p class="levelnote">AIは1手8秒ほど考えます（最強設定）。</p>
+    <div class="field" id="speedField" hidden>
+      <span>観戦の速さ（AIが1手に考える時間）</span>
+      <div class="seg" id="segSpeed">
+        <button data-v="1000">1秒</button><button data-v="3000">3秒</button><button data-v="8000">8秒（最強）</button>
+      </div>
+    </div>
+    <p class="levelnote" id="newNote">AIは1手8秒ほど考えます（最強設定）。</p>
     <div class="row">
       <button class="btn" id="newCancel">やめる</button>
       <button class="btn primary" id="newStart">対局開始</button>
@@ -405,6 +411,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   const firstHuman = Math.random() < .5 ? 0 : 1; // 初回もふり駒
   let st = { startSfen: E.START_SFEN, moves: [], human: firstHuman, level: 4, flipped: firstHuman === 1, lastEval: null, sidePref: 'r', evals: [] };
   let furigomaNote = '';
+  // 観戦（AI同士）: st.human = -1。評価値などは先手から見た値で表示する
+  const isSpec = () => st.human === -1;
+  const viewSide = () => (st.human === 1 ? 1 : 0);
+  const nameA = () => (isSpec() ? '先手' : 'あなた'); // 評価値の「＋」側
+  const nameB = () => (isSpec() ? '後手' : 'AI');
   let review = null;   // 振り返り中: {ply, mvs, pos}
   let anaId = 0, anaRunning = false;
   let game = null;
@@ -434,10 +445,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   }
   let localSearcher = null;
   function askAI() {
-    if (game.result || game.side === st.human) return;
+    if (game.result || game.side === st.human || st.paused) return;
     thinking = true; render();
     const id = ++reqId, t0 = Date.now();
-    const msg = { id, sfen: st.startSfen, moves: st.moves.slice(), opts: LEVELS[st.level].opts };
+    const msg = { id, sfen: st.startSfen, moves: st.moves.slice(), opts: isSpec() ? { timeMs: st.specMs || 8000 } : LEVELS[st.level].opts };
     msg.t0 = t0;
     if (worker) worker.postMessage(msg);
     else setTimeout(() => {
@@ -456,7 +467,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       if (d.id !== reqId) return;
       thinking = false;
       if (typeof d.score === 'number') {
-        st.lastEval = -d.score; // あなたから見た値
+        st.lastEval = game.side === viewSide() ? d.score : -d.score; // あなた（観戦中は先手）から見た値
         st.lastHow = d.how || '';
         st.evals[st.moves.length] = { s: game.side === 0 ? d.score : -d.score, best: d.move, a: 1 }; // 先手から見た値・最強設定の読み
       }
@@ -595,17 +606,19 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     // 手番表示
     const turn = $('turn'), you = game.side === st.human;
     turn.className = 'turn' + (thinking ? ' thinking' : you && !game.result ? ' mine' : '');
-    $('turnText').textContent = game.result ? '終局' : thinking ? 'AIが考えています' : you ? 'あなたの番' : 'AIの番';
+    $('turnText').textContent = game.result ? '終局' : isSpec()
+      ? (st.paused ? '一時停止中' : `${game.side ? '後手' : '先手'}のAIが考えています`)
+      : thinking ? 'AIが考えています' : you ? 'あなたの番' : 'AIの番';
     const ev = st.lastEval;
     if (st.moves.length > 2) furigomaNote = '';
     $('evalv').textContent = furigomaNote || (ev === null || ev === undefined ? '' :
-      (Math.abs(ev) >= E.MATE_BOUND ? (ev > 0 ? '評価 あなたの勝ち筋' : '評価 AIの勝ち筋') : `評価 ${ev > 0 ? '+' : ''}${ev}`) +
+      (Math.abs(ev) >= E.MATE_BOUND ? `評価 ${ev > 0 ? nameA() : nameB()}の勝ち筋` : `評価${isSpec() ? '(先手)' : ''} ${ev > 0 ? '+' : ''}${ev}`) +
       ({ mate: '・詰みを読み切り', proven: '・DBで詰み確定', db100: '・DB勝率100%' }[st.lastHow] || ''));
 
     // ボタン
-    $('btnUndo').disabled = !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
-    $('btnResign').textContent = game.result ? '振り返る' : '投了';
-    $('btnResign').className = 'btn' + (game.result ? '' : ' warn');
+    $('btnUndo').disabled = isSpec() || !st.moves.length || (st.moves.length === 1 && st.human === 1 && !thinking);
+    $('btnResign').textContent = game.result ? '振り返る' : isSpec() ? (st.paused ? '再開' : '一時停止') : '投了';
+    $('btnResign').className = 'btn' + (game.result || isSpec() ? '' : ' warn');
     const decl = !game.result && !thinking && game.side === st.human ? game.pos.declarationStatus() : null;
     $('btnDeclare').hidden = !(decl && decl.kingInZone);
 
@@ -625,13 +638,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     } else kifEl.scrollTop = kifEl.scrollHeight;
     syncHint();
     renderHints();
-    $('kifuTitle').textContent = `棋譜（${game.kif.length}手） ${st.human ? 'AI ▲ − あなた △' : 'あなた ▲ − AI △'}`;
+    $('kifuTitle').textContent = `棋譜（${game.kif.length}手） ${isSpec() ? 'AI ▲ − AI △（観戦）' : st.human ? 'AI ▲ − あなた △' : 'あなた ▲ − AI △'}`;
   }
 
   function renderHand(el, side) {
     const hand = (review ? review.pos : game.pos).hand[side], isMine = side === st.human;
     const tappable = review ? side === review.pos.side : isMine;
-    const label = (side ? '△' : '▲') + (isMine ? 'あなた' : 'AI');
+    const label = (side ? '△' : '▲') + (isSpec() ? (side ? '後手AI' : '先手AI') : isMine ? 'あなた' : 'AI');
     const items = HAND_ORDER.filter(pt => hand[pt]).map(pt =>
       `<button class="hpiece${sel && sel.drop === pt && tappable ? ' sel' : ''}" data-pt="${pt}" aria-label="持ち駒 ${E.PIECE_KANJI[pt]} ${hand[pt]}枚"${tappable ? '' : ' tabindex="-1"'}>${komaHTML(pt, side ? 'gote' : 'sente', side !== (st.flipped ? 1 : 0) ? ' rev' : '')}${hand[pt] > 1 ? `<span class="cnt">${hand[pt]}</span>` : ''}</button>`);
     el.innerHTML = `<span class="who">${label}</span><div class="pieces">${items.join('') || '<span class="empty">持ち駒なし</span>'}</div>`;
@@ -686,8 +699,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     } catch (e) { hintWorker = null; hintBusy = false; }
   }
   function hintEval(sc) {
-    const v = st.human === 0 ? sc : -sc;
-    if (Math.abs(v) >= E.MATE_BOUND) return v > 0 ? 'あなたの勝ち筋' : 'AIの勝ち筋';
+    const v = viewSide() === 0 ? sc : -sc;
+    if (Math.abs(v) >= E.MATE_BOUND) return `${v > 0 ? nameA() : nameB()}の勝ち筋`;
     return (v > 0 ? '+' : '') + v;
   }
   function renderHints() {
@@ -695,6 +708,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const show = !review && !!game && (!game.result || hints.you || hints.ai);
     panel.hidden = !show || !!review || !!game.result;
     if (panel.hidden) return;
+    if (isSpec()) hintView = 'ai';
+    $('hintSeg').hidden = isSpec(); // 観戦中は両方ともAIなので切り替えなし
     $('hintSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === hintView)));
     const h = hints[hintView];
     const n = st.moves.length;
@@ -704,7 +719,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       $('hintList').innerHTML = `<li class="none">${hintView === 'ai' ? 'AIが指すと、AIが比べた手がここに出ます' : 'あなたの番になると、おすすめの手がここに出ます'}</li>`;
       return;
     }
-    const whose = hintView === 'ai' ? (h.ply === n ? 'AIの番' : `${h.ply + 1}手目（AIの手）`) : (h.ply === n ? 'あなたの番' : `${h.ply + 1}手目（あなたの手）`);
+    const sideName = h.ply % 2 ? '後手' : '先手';
+    const whose = isSpec() ? (h.ply === n ? `${sideName}AIの番` : `${h.ply + 1}手目（${sideName}AIの手）`)
+      : hintView === 'ai' ? (h.ply === n ? 'AIの番' : `${h.ply + 1}手目（AIの手）`) : (h.ply === n ? 'あなたの番' : `${h.ply + 1}手目（あなたの手）`);
     $('hintSt').textContent = `${whose}・${h.depth ? `${h.depth}手先まで` : ''}${live ? ' 考え中…' : ''}`;
     const played = h.ply < n ? st.moves[h.ply] : null;
     const mateRow = h.mate ? `<li class="mate-row"><span class="rk">詰</span><span>詰みあり：${h.mate.kif}${h.mate.usi === played ? '<span class="played">指した手</span>' : ''}</span>` +
@@ -775,9 +792,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     return drop >= 0.2 ? 'bad' : drop >= 0.1 ? 'dubious' : null;
   }
   function fmtEval(s) { // 先手視点の値 → あなた視点の説明
-    const v = st.human === 0 ? s : -s;
-    if (Math.abs(v) >= E.MATE_BOUND) return v > 0 ? '<b>あなたの勝ち筋</b>（詰みあり）' : '<b>AIの勝ち筋</b>（詰みあり）';
-    const label = Math.abs(v) < 150 ? '互角' : v > 0 ? (v >= 800 ? 'あなた優勢' : 'あなた有利') : (v <= -800 ? 'AI優勢' : 'AI有利');
+    const v = viewSide() === 0 ? s : -s;
+    if (Math.abs(v) >= E.MATE_BOUND) return `<b>${v > 0 ? nameA() : nameB()}の勝ち筋</b>（詰みあり）`;
+    const label = Math.abs(v) < 150 ? '互角' : v > 0 ? (v >= 800 ? `${nameA()}優勢` : `${nameA()}有利`) : (v <= -800 ? `${nameB()}優勢` : `${nameB()}有利`);
     return `<b>${v > 0 ? '+' : ''}${v}</b>（${label}）`;
   }
   function usiToKif(pos, usi, prevTo) {
@@ -793,20 +810,20 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     // 評価値グラフ（上があなた有利。勝率に変換して縦軸に）
     const svg = $('graph'), W = Math.max(200, Math.round(svg.clientWidth || 320)), H = 110, pad = 6;
     const x = i => pad + (W - 2 * pad) * (n ? i / n : 0);
-    const y = sc => { const v = st.human === 0 ? sc : -sc; return H / 2 - (2 * winp(v) - 1) * (H / 2 - pad); };
+    const y = sc => { const v = viewSide() === 0 ? sc : -sc; return H / 2 - (2 * winp(v) - 1) * (H / 2 - pad); };
     let path = '', pen = false, dots = '';
     for (let i = 0; i <= n; i++) {
       const e = st.evals[i];
       if (!e) { pen = false; continue; }
       path += `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(e.s).toFixed(1)}`; pen = true;
-      const q = i > 0 && (i - 1) % 2 === st.human ? moveQuality(i) : null;
+      const q = i > 0 && (isSpec() || (i - 1) % 2 === st.human) ? moveQuality(i) : null;
       if (q === 'bad') dots += `<circle class="badpt" cx="${x(i).toFixed(1)}" cy="${y(e.s).toFixed(1)}" r="3"/>`;
     }
     const cur = st.evals[p];
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.innerHTML = `<rect class="up" x="0" y="0" width="${W}" height="${H / 2}"/><rect class="down" x="0" y="${H / 2}" width="${W}" height="${H / 2}"/>` +
       `<line class="mid" x1="0" x2="${W}" y1="${H / 2}" y2="${H / 2}"/>` +
-      `<text x="6" y="14">あなた有利</text><text x="6" y="${H - 6}">AI有利</text>` +
+      `<text x="6" y="14">${nameA()}有利</text><text x="6" y="${H - 6}">${nameB()}有利</text>` +
       `<path class="line" d="${path}"/>${dots}` +
       `<line class="cursor" x1="${x(p)}" x2="${x(p)}" y1="0" y2="${H}"/>` +
       (cur ? `<circle class="dot" cx="${x(p)}" cy="${y(cur.s)}" r="4"/>` : '');
@@ -815,7 +832,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const lines = [];
     if (p === 0) lines.push('開始局面');
     else {
-      const who = (p - 1) % 2 === st.human ? 'あなた' : 'AI';
+      const who = isSpec() ? ((p - 1) % 2 ? '後手' : '先手') : (p - 1) % 2 === st.human ? 'あなた' : 'AI';
       const q = moveQuality(p);
       const tag = q === 'bad' ? '<span class="tag bad">悪手</span>' : q === 'dubious' ? '<span class="tag dubious">疑問手</span>' : q === 'best' ? '<span class="tag good">AIの推奨どおり</span>' : '';
       lines.push(`${p}手目（${who}） <b>${game.kif[p - 1].replace(/\(\d\d\)$/, '')}</b>${tag}`);
@@ -892,7 +909,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   let cand = null;            // {id, evals: Map(usi → 先手から見た値), total}
   let candId = 0, candWorker = null, candBusy = false;
   const moverVal = (sc, mover) => (mover === 0 ? sc : -sc);
-  const youVal = sc => (st.human === 0 ? sc : -sc);
+  const youVal = sc => (viewSide() === 0 ? sc : -sc);
 
   function clearCand() {
     if (cand && cand.timer) clearInterval(cand.timer);
@@ -979,7 +996,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       out.push(`<span style="color:var(--muted)">AIがこの駒の手を最強設定で読んでいます（あと約${rest}秒）</span>`);
       return out;
     }
-    out.push('<span style="color:var(--muted)">駒の行き先ごとのAI評価値（あなたから見た値・枠付きが実戦の手）</span>');
+    out.push(`<span style="color:var(--muted)">駒の行き先ごとのAI評価値（${nameA()}から見た値・枠付きが実戦の手）</span>`);
     let bestM = null, bestV = null;
     for (const ms of targets.values()) for (const m of ms) {
       const v = cand.evals.get(E.moveToUSI(m));
@@ -1000,8 +1017,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     const r = game.result;
     if (!r) return;
     const you = st.human;
-    $('resultTitle').textContent = r.winner === null ? '引き分け' : r.winner === you ? 'あなたの勝ち' : 'AIの勝ち';
-    const by = r.winner === null ? '' : r.winner === you ? 'AI' : 'あなた';
+    $('resultTitle').textContent = r.winner === null ? '引き分け' : isSpec() ? `${r.winner ? '後手' : '先手'}AIの勝ち` : r.winner === you ? 'あなたの勝ち' : 'AIの勝ち';
+    const by = r.winner === null ? '' : isSpec() ? (r.winner ? '先手AI' : '後手AI') : r.winner === you ? 'AI' : 'あなた';
     const reasonText = {
       '詰み': `${game.kif.length}手で${by}の玉が詰みました。`,
       '指す手なし': `${by}に指せる手がなくなりました。`,
@@ -1009,7 +1026,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       '千日手': '同じ局面が4回現れたため千日手です。',
       '連続王手の千日手': `連続王手の千日手のため、王手をかけ続けた${by}の負けです。`,
       '持将棋(500手)': '500手に達したため持将棋です。',
-      '入玉宣言': `${r.winner === you ? 'あなた' : 'AI'}の入玉宣言が成立しました。`,
+      '入玉宣言': `${isSpec() ? (r.winner ? '後手AI' : '先手AI') : r.winner === you ? 'あなた' : 'AI'}の入玉宣言が成立しました。`,
       '入玉宣言(24〜30点・指し直し)': '入玉宣言の点数が24〜30点だったため指し直しです。',
       '入玉宣言の条件不足': '入玉宣言の条件を満たしていなかったため、宣言した側の負けです。',
     }[r.reason] || r.reason;
@@ -1045,6 +1062,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   $('btnFlip').onclick = () => { st.flipped = !st.flipped; save(); render(); };
   $('btnResign').onclick = () => {
     if (game.result) { enterReview(); return; }
+    if (isSpec()) {
+      st.paused = !st.paused; save(); render();
+      if (!st.paused) askAI();
+      return;
+    }
     confirmBox('投了しますか？', 'この対局はAIの勝ちになります。', '投了する', () => {
       if (thinking) cancelAI();
       game.result = { winner: st.human ^ 1, reason: '投了' }; st.result = game.result; save(); render(); showResult();
@@ -1057,7 +1079,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     confirmBox('入玉宣言しますか？', msg, '宣言する', () => { game.declare(); st.result = game.result; save(); render(); showResult(); });
   };
   $('btnCopy').onclick = () => {
-    const head = `# KIF形式棋譜ファイル\n手合割：平手\n先手：${st.human ? 'AI(' + LEVELS[st.level].name + ')' : 'あなた'}\n後手：${st.human ? 'あなた' : 'AI(' + LEVELS[st.level].name + ')'}\n手数----指手---------消費時間--\n`;
+    const head = `# KIF形式棋譜ファイル\n手合割：平手\n先手：${st.human ? 'AI(' + LEVELS[st.level].name + ')' : 'あなた'}\n後手：${st.human === 1 ? 'あなた' : 'AI(' + LEVELS[st.level].name + ')'}\n手数----指手---------消費時間--\n`;
     const body = game.kif.map((k, i) => `${String(i + 1).padStart(4)} ${k.slice(1).replace('　', '　')}`).join('\n');
     const tail = game.result ? `\nまで${game.kif.length}手で${game.result.winner === null ? game.result.reason : (game.result.winner ? '後手' : '先手') + 'の勝ち'}` : '';
     const text = head + body + tail + '\n';
@@ -1069,13 +1091,19 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   };
 
   // ---- 新規対局シート
-  let draft = { side: 'r', level: 4 }; // AIの強さは最強のみ
+  let draft = { side: 'r', level: 4, speed: 8000 }; // AIの強さは最強のみ
   function syncSeg() {
     $('segSide').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === draft.side)));
+    $('segSpeed').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.v === draft.speed)));
+    const spec = draft.side === 'spec';
+    $('speedField').hidden = !spec;
+    $('newNote').textContent = spec ? 'AI同士の対局を観戦します。途中で「一時停止」できます。' : 'AIは1手8秒ほど考えます（最強設定）。';
+    $('newStart').textContent = spec ? '観戦を始める' : '対局開始';
   }
   $('segSide').onclick = e => { const b = e.target.closest('button'); if (b) { draft.side = b.dataset.v; syncSeg(); } };
+  $('segSpeed').onclick = e => { const b = e.target.closest('button'); if (b) { draft.speed = +b.dataset.v; syncSeg(); } };
   function openNew() {
-    draft = { side: st.sidePref || 'r', level: 4 };
+    draft = { side: st.sidePref || 'r', level: 4, speed: st.specMs || 8000 };
     syncSeg(); $('ovNew').hidden = false; $('newStart').focus();
   }
   $('btnNew').onclick = openNew;
@@ -1084,8 +1112,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     $('ovNew').hidden = true;
     if (thinking) cancelAI();
     if (review) exitReview();
-    const human = draft.side === 'r' ? (Math.random() < .5 ? 0 : 1) : +draft.side;
-    st = { startSfen: E.START_SFEN, moves: [], human, level: draft.level, flipped: human === 1, lastEval: null, sidePref: draft.side, evals: [] };
+    const human = draft.side === 'spec' ? -1 : draft.side === 'r' ? (Math.random() < .5 ? 0 : 1) : +draft.side;
+    st = { startSfen: E.START_SFEN, moves: [], human, level: draft.level, flipped: human === 1, lastEval: null, sidePref: draft.side, evals: [], specMs: draft.speed, paused: false };
     furigomaNote = draft.side === 'r' ? `ふり駒: あなたは${human ? '後手 △' : '先手 ▲'}` : '';
     sel = null; targets.clear();
     rebuild(); save(); render();
